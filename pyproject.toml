@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ajustelab"
+version = "1.0.0"
+description = "Ajuste de datos experimentales con base estadística (χ², varianza efectiva, selección de modelos)"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Jorge del Río López (WetZap)" }]
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.26",
+    "scipy>=1.13",
+    "pandas>=2.1",
+    "sympy>=1.12",
+    "matplotlib>=3.8",
+    "openpyxl>=3.1",   # .xlsx
+    "xlrd>=2.0",       # .xls
+    "odfpy>=1.4",      # .ods
+    "PySide6-Essentials>=6.5",  # interfaz (6.5+: detección del tema claro/oscuro del sistema)
+]
+
+[project.gui-scripts]
+ajustelab = "ajustelab.gui.app:main"
+
+[project.scripts]
+ajustelab-cli = "ajustelab.cli:main"
+
+[project.urls]
+Repositorio = "https://github.com/WetZap/PythonPrograms"
+
+[project.optional-dependencies]
+parquet = ["pyarrow>=14"]
+test = ["pytest>=8"]
+
+[tool.setuptools.packages.find]
+include = ["ajustelab*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = [
+    # aviso interno de matplotlib con Qt 6, no es de ajustelab
+    "ignore:.*AA_UseHighDpiPixmaps.*:DeprecationWarning",
+]
+markers = [
+    "lento: validación Monte Carlo (unos segundos)",
+    "gui: pruebas de la interfaz (se ejecutan sin pantalla)",
+]

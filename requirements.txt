@@ -1,0 +1,12 @@
+numpy>=1.26
+scipy>=1.13
+pandas>=2.1
+sympy>=1.12
+matplotlib>=3.8
+openpyxl>=3.1
+xlrd>=2.0
+odfpy>=1.4
+PySide6-Essentials>=6.5
+pytest>=8
+# Opcional, solo para .parquet/.feather:
+# pyarrow>=14
