@@ -1,0 +1,6 @@
+Recursos de la interfaz.
+
+sorpresa.png (o .jpg, .jpeg, .webp, .gif)
+    Imagen del easter egg: aparece al pulsar el botón «π» del diálogo
+    Ayuda → Acerca de ajustelab. Los GIF se reproducen animados.
+    Si no existe, se muestra un marcador de posición.

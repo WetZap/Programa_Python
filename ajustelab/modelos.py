@@ -67,6 +67,8 @@ class Modelo:
     estimador_p0: Callable[[np.ndarray, np.ndarray], dict | np.ndarray] | None = field(default=None, repr=False)
     dominio: Callable[[np.ndarray], np.ndarray] | None = field(default=None, repr=False)
     plausibilidad: Callable[[dict, np.ndarray], str | None] | None = field(default=None, repr=False)
+    fijos: dict[str, float] = field(default_factory=dict)  # parámetros fijados (ver fijar)
+    base: "Modelo | None" = field(default=None, repr=False)  # modelo original si hay fijos
     _f: Callable = field(default=None, repr=False)
     _dfdx: Callable = field(default=None, repr=False)
     _dfdp: tuple[Callable, ...] = field(default=(), repr=False)
@@ -132,6 +134,60 @@ class Modelo:
     def latex_ecuacion(self, y: str = "y") -> str:
         return f"{y} = {self.latex}"
 
+    @property
+    def original(self) -> "Modelo":
+        """El modelo sin parámetros fijados."""
+        return self.base if self.base is not None else self
+
+    def fijar(self, valores: dict[str, float] | None) -> "Modelo":
+        """Nuevo modelo con algunos parámetros fijados a un valor conocido.
+
+        Se sustituyen en la expresión simbólica, de modo que derivadas, linealidad
+        y LaTeX se recalculan solos. El estimador de p0, el dominio y la
+        plausibilidad del modelo original se conservan.
+
+        >>> m = obtener("exponencial_fondo").fijar({"C": 0})
+        >>> m.parametros
+        ('A', 'tau')
+        """
+        valores = {k: float(v) for k, v in (valores or {}).items()}
+        if not valores:
+            return self
+        desconocidos = set(valores) - set(self.parametros)
+        if desconocidos:
+            raise ErrorModelo(f"{sorted(desconocidos)} no son parámetros de '{self.nombre}'.")
+        if len(valores) == self.k:
+            raise ErrorModelo("No se pueden fijar todos los parámetros: no quedaría nada que ajustar.")
+        simbolos = {s.name: s for s in self.simbolica.free_symbols}
+        expr = self.simbolica.subs({simbolos[k]: v for k, v in valores.items()})
+        libres = tuple(n for n in self.parametros if n not in valores)
+        xs = simbolos.get(self.variable, sp.Symbol(self.variable, real=True))
+
+        original, nombres, comprobar = self.estimador_p0, self.parametros, self.plausibilidad
+        todos = {**self.fijos, **valores}
+
+        def _estimador(x, y):
+            r = original(x, y)
+            if isinstance(r, dict):
+                return {k: r[k] for k in libres}
+            return np.asarray(r, dtype=float)[[nombres.index(k) for k in libres]]
+
+        def _plausibilidad(p, x):
+            return comprobar({**p, **todos}, x)
+
+        estimador = _estimador if original is not None else None
+        plausibilidad = _plausibilidad if comprobar is not None else None
+
+        base = self.original
+        fijos = {**self.fijos, **valores}
+        texto = ", ".join(f"{k} = {v:g}" for k, v in fijos.items())
+        m = _construir(expr, xs, [simbolos[n] for n in libres], nombre=f"{base.nombre} ({texto})",
+                       expresion=base.expresion, variable=self.variable, descripcion=base.descripcion,
+                       p0=estimador, dominio=self.dominio, plausibilidad=plausibilidad)
+        m.fijos = fijos
+        m.base = base
+        return m
+
     def __repr__(self) -> str:
         tipo = "lineal en p" if self.lineal else "no lineal"
         return f"Modelo('{self.nombre}': y = {self.expresion}; parámetros {self.parametros}; {tipo})"
@@ -184,15 +240,22 @@ def desde_expresion(
     if sobrantes:
         raise ErrorModelo(f"Símbolos sin asignar: {sobrantes}.")
 
+    return _construir(expr, xs, ps, nombre=nombre or "Personalizado", expresion=texto, variable=variable,
+                      descripcion=descripcion, p0=p0, dominio=dominio, plausibilidad=plausibilidad)
+
+
+def _construir(expr, xs, ps, *, nombre, expresion, variable, descripcion="", p0=None, dominio=None,
+               plausibilidad=None) -> Modelo:
+    """Modelo a partir de una expresión SymPy ya interpretada."""
     derivadas = [sp.diff(expr, p) for p in ps]
     # Lineal en p ⇔ todas las segundas derivadas respecto a los parámetros son 0
     # (expand basta para los casos reales y es mucho más rápido que simplify).
     lineal = all(sp.expand(sp.diff(d, q)) == 0 for d in derivadas for q in ps)
     args = [xs, *ps]
     return Modelo(
-        nombre=nombre or "Personalizado",
-        expresion=texto,
-        parametros=parametros,
+        nombre=nombre,
+        expresion=expresion,
+        parametros=tuple(p.name for p in ps),
         variable=variable,
         simbolica=expr,
         latex=sp.latex(expr),

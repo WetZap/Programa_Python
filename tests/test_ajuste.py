@@ -122,3 +122,34 @@ def test_degenerado():
     res = ajustar(Datos(X, Y, dy=DY), m)
     assert not res.convergido
     assert any("degenerados" in a for a in res.avisos)
+
+
+def test_fijos_equivale_a_modelo_reducido():
+    """Fijar b = 5 en a·x + b equivale a ajustar a·x a los datos y − 5."""
+    res = ajustar(Datos(X, Y, dy=DY), "lineal", fijos={"b": 5.0})
+    ref = ajustar(Datos(X, Y - 5.0, dy=DY), "proporcional")
+    assert res.nombres == ("a",) and res.fijos == {"b": 5.0}
+    assert np.allclose(res.p, ref.p) and np.allclose(res.cov, ref.cov)
+    assert res.nu == X.size - 1
+    assert "(fijo)" in res.resumen()
+
+
+def test_fijos_no_lineal_y_limites():
+    t = np.linspace(0, 6, 25)
+    y = 3 * np.exp(-t / 1.5) + 0.4 + rng.normal(0, 0.02, t.size)
+    res = ajustar(Datos(t, y, dy=0.02), "exponencial_fondo", fijos={"C": 0.4}, limites=([0, 1.0], [10, 2.0]))
+    assert res.convergido and abs(res.p[1] - 1.5) < 0.05 and 1.0 <= res.p[1] <= 2.0
+
+
+def test_sigma_f_e_inversa_recta():
+    """Para y = ax + b: x0 = (y0 − b)/a y σ_x = √(σ_f² + σ_y0²)/|a| (método delta)."""
+    res = ajustar(Datos(X, Y, dy=DY), "lineal")
+    (a, b), C = res.p, res.cov
+    x0 = 4.3
+    assert np.isclose(res.sigma_f(x0)[0], np.sqrt(C[0, 0] * x0**2 + C[1, 1] + 2 * x0 * C[0, 1]))
+    y0, sy0 = 12.0, 0.3
+    (xs, sx), = res.inversa(y0, sy0)
+    assert np.isclose(xs, (y0 - b) / a)
+    assert np.isclose(sx, np.hypot(res.sigma_f(xs)[0], sy0) / abs(a))
+    assert res.inversa(1e6) == []  # fuera del rango de los datos
+    assert len(res.inversa(1e6, intervalo=(0, 1e6))) == 1
