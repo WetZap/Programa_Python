@@ -30,7 +30,7 @@ ajustelab = "ajustelab.gui.app:main"
 ajustelab-cli = "ajustelab.cli:main"
 
 [project.urls]
-Repositorio = "https://github.com/WetZap/PythonPrograms"
+Repositorio = "https://github.com/WetZap/Programa_Python"
 
 [project.optional-dependencies]
 parquet = ["pyarrow>=14"]
