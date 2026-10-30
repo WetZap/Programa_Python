@@ -24,7 +24,7 @@ from .tabla import PanelDatos  # noqa: E402
 from .tema import GestorTema  # noqa: E402
 from .trabajos import Trabajo  # noqa: E402
 
-URL_REPO = "https://github.com/WetZap/PythonPrograms"
+URL_REPO = "https://github.com/WetZap/Programa_Python"
 
 
 def _describir(df) -> str:

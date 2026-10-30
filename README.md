@@ -1,7 +1,7 @@
 # ajustelab — ajuste de datos experimentales
 
-[![tests](https://github.com/WetZap/PythonPrograms/actions/workflows/tests.yml/badge.svg)](https://github.com/WetZap/PythonPrograms/actions/workflows/tests.yml)
-![Python](https://img.shields.io/badge/python-3.10%E2%80%933.13-blue)
+[![tests](https://github.com/WetZap/Programa_Python/actions/workflows/tests.yml/badge.svg)](https://github.com/WetZap/Programa_Python/actions/workflows/tests.yml)
+![Python](https://img.shields.io/badge/python-3.10%E2%80%933.14-blue)
 ![Plataformas](https://img.shields.io/badge/Windows%20%7C%20macOS%20%7C%20Linux-informational)
 ![Licencia](https://img.shields.io/badge/licencia-MIT-green)
 
@@ -35,8 +35,9 @@ o como **biblioteca de Python**.
 10. [Validación](#validación)
 11. [Estructura del proyecto](#estructura-del-proyecto)
 12. [Desarrollo](#desarrollo)
-13. [Cambios respecto a `ProgramasUtiles.py`](#cambios-respecto-a-programasutilespy)
-14. [Referencias](#referencias)
+13. [Solución de problemas](#solución-de-problemas)
+14. [Cambios respecto a `ProgramasUtiles.py`](#cambios-respecto-a-programasutilespy)
+15. [Referencias](#referencias)
 
 ---
 
@@ -73,7 +74,7 @@ PySide6...) se instalan solas.
 `ajustelab-cli` disponibles en todo el sistema:
 
 ```bash
-pipx install git+https://github.com/WetZap/PythonPrograms
+pipx install git+https://github.com/WetZap/Programa_Python
 ajustelab
 ```
 
@@ -89,7 +90,7 @@ ajustelab
    ```powershell
    py -m venv $HOME\ajustelab-venv
    & $HOME\ajustelab-venv\Scripts\Activate.ps1
-   pip install https://github.com/WetZap/PythonPrograms/archive/refs/heads/main.zip
+   pip install https://github.com/WetZap/Programa_Python/archive/refs/heads/main.zip
    ajustelab
    ```
 
@@ -110,7 +111,7 @@ ajustelab
    ```bash
    python3 -m venv ~/ajustelab-venv
    source ~/ajustelab-venv/bin/activate
-   pip install git+https://github.com/WetZap/PythonPrograms
+   pip install git+https://github.com/WetZap/Programa_Python
    ajustelab
    ```
 
@@ -131,7 +132,7 @@ sudo pacman -S python-pip git xcb-util-cursor
 
 python3 -m venv ~/ajustelab-venv
 source ~/ajustelab-venv/bin/activate
-pip install git+https://github.com/WetZap/PythonPrograms
+pip install git+https://github.com/WetZap/Programa_Python
 ajustelab
 ```
 
@@ -147,8 +148,8 @@ ajustelab
 ### Para desarrollar (clonando el repositorio)
 
 ```bash
-git clone https://github.com/WetZap/PythonPrograms.git
-cd PythonPrograms
+git clone https://github.com/WetZap/Programa_Python.git
+cd Programa_Python
 python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\activate
 pip install -e ".[test]"
 pytest -m "not lento"
@@ -244,30 +245,23 @@ con `;` para que la coma decimal no sea ambigua.
 ## Uso desde Python
 
 ```python
-from ajustelab import (
-    cargar,
-    ajustar,
-    seleccionar,
-    interpolar,
-    intersecar_datos,
-    dividir,
-)
+from ajustelab import cargar, ajustar, seleccionar, interpolar, intersecar_datos, dividir
 
-datos = cargar("ejemplos/descarga_rc.csv")  # detecta formato y columnas
-res = ajustar(datos, "exponencial_fondo")  # o ajustar(datos, "V0*exp(-x/tau) + Vinf")
-print(res.resumen())  # informe completo
+datos = cargar("ejemplos/descarga_rc.csv")          # detecta formato y columnas
+res = ajustar(datos, "exponencial_fondo")            # o ajustar(datos, "V0*exp(-x/tau) + Vinf")
+print(res.resumen())                                 # informe completo
 tau, sigma_tau = res.parametros["tau"]
 
-b = res.bondad()  # χ², p-valor, rachas, AICc...
+b = res.bondad()                                     # χ², p-valor, rachas, AICc...
 print(b.chi2_red, b.p_valor, b.avisos)
 f, inferior, superior = res.banda([1.0, 2.0], nivel=0.95)
 
-sel = seleccionar(datos)  # selección automática
+sel = seleccionar(datos)                             # selección automática
 print(sel.resumen())
-print(sel.tabla())  # DataFrame con la clasificación
+print(sel.tabla())                                   # DataFrame con la clasificación
 
 spline = interpolar(datos, "pchip")
-r = spline.monte_carlo(lambda g: g.integral(1, 3))  # valor ± σ por Monte Carlo
+r = spline.monte_carlo(lambda g: g.integral(1, 3))   # valor ± σ por Monte Carlo
 print(r.nominal, r.sigma)
 
 corte = intersecar_datos(*dividir(cargar("ejemplos/dos_rectas.dat"), 8))
@@ -423,14 +417,14 @@ La batería de tests (`pytest`, más de 180 pruebas) comprueba, entre otras cosa
 - **Interfaz**: arranque, temas, apertura, ajuste, clic para excluir, selección con cancelación,
   interpolación, intersección, pegado y exportación, todo sin pantalla.
 
-La CI de GitHub ejecuta los tests en **Ubuntu, Windows y macOS** con Python 3.10 y 3.13.
+La CI de GitHub ejecuta los tests en **Ubuntu, Windows y macOS** con Python 3.10, 3.13 y 3.14.
 
 ---
 
 ## Estructura del proyecto
 
 ```
-PythonPrograms/
+Programa_Python/
 ├── ajustelab/
 │   ├── datos.py           # lectura multiformato y asignación de columnas
 │   ├── modelos.py         # modelos (SymPy), catálogo y valores iniciales
@@ -462,6 +456,18 @@ pytest -m gui              # solo la interfaz (sin pantalla)
 
 Los tests de la interfaz usan `QT_QPA_PLATFORM=offscreen`, así que no abren ventanas. Las
 contribuciones son bienvenidas mediante *fork* y *pull request*.
+
+---
+
+## Solución de problemas
+
+| Síntoma | Causa y solución |
+|---|---|
+| `command not found: ajustelab` tras instalar | Se ha instalado una versión antigua sin interfaz. Comprueba con `pip show ajustelab` (debe ser ≥ 1.0.0) y actualiza con `pip install --upgrade git+https://github.com/WetZap/Programa_Python`. Comprueba también que el entorno está activado (`source ~/ajustelab-venv/bin/activate`). En zsh, ejecuta `rehash` si el comando acaba de instalarse. |
+| zsh pregunta `correct 'pip' to '_pip' [nyae]?` | Es la autocorrección de zsh: responde `n`. Para que no vuelva a pasar, usa `python -m pip ...` o añade `unsetopt correct` a `~/.zshrc`. |
+| *Could not load the Qt platform plugin "xcb"* | Falta `libxcb-cursor0` / `xcb-util-cursor` (ver [Linux](#instalación)). |
+| La ventana no sigue el modo oscuro | Tu escritorio no informa del esquema de color: elige el tema en **Ver → Tema**. |
+| En Windows, los símbolos χ² o ± salen mal al redirigir la salida de `ajustelab-cli` | Usa `PYTHONIOENCODING=utf-8` o el informe con `-o informe.txt`, que siempre está en UTF-8. |
 
 ---
 

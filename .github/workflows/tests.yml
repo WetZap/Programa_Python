@@ -1,5 +1,5 @@
 # Ejecuta los tests en Linux, Windows y macOS con la versión de Python más
-# antigua y la más reciente soportadas. La interfaz se prueba sin pantalla
+# antigua soportada, la 3.13 y la más reciente (3.14). La interfaz se prueba sin pantalla
 # (QT_QPA_PLATFORM=offscreen).
 name: tests
 
@@ -13,14 +13,14 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        python: ["3.10", "3.13"]
+        python: ["3.10", "3.13", "3.14"]
     runs-on: ${{ matrix.os }}
     env:
       QT_QPA_PLATFORM: offscreen
       PYTHONIOENCODING: utf-8
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
       - name: Bibliotecas de sistema que necesita Qt (solo Linux)
@@ -31,5 +31,5 @@ jobs:
       - name: Tests rápidos (incluye la interfaz)
         run: python -m pytest -m "not lento"
       - name: Validación Monte Carlo completa
-        if: runner.os == 'Linux' && matrix.python == '3.13'
+        if: runner.os == 'Linux' && matrix.python == '3.14'
         run: python -m pytest -m lento
