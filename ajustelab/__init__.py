@@ -17,7 +17,7 @@ from .seleccion import CANDIDATOS_AUTO, Seleccion, seleccionar
 from .interpolacion import METODOS, Interpolacion, interpolar
 from .interseccion import Interseccion, dividir, intersecar, intersecar_datos
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 __all__ = [
     "Datos", "ErrorDatos", "a_datos", "cargar", "hojas", "leer_tabla", "leer_texto",

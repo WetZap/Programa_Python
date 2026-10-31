@@ -68,3 +68,35 @@ def test_p0_linealizacion():
     assert np.allclose(CATALOGO["exponencial"].p0(x, 3 * np.exp(-0.5 * x)), [3, -0.5])
     assert np.allclose(CATALOGO["potencia"].p0(x, 2 * x**1.5), [2, 1.5])
     assert not CATALOGO["potencia"].dominio_valido(np.array([-1.0, 1.0]))
+
+
+# --- parámetros fijos ------------------------------------------------------
+def test_fijar_sustituye_y_conserva_metadatos():
+    base = CATALOGO["exponencial_fondo"]
+    m = base.fijar({"C": 0.5})
+    assert m.parametros == ("A", "tau") and m.fijos == {"C": 0.5}
+    assert m.original is base and m.base is base
+    x = np.linspace(0, 5, 20)
+    assert np.allclose(m(x, 3, 1.2), base(x, 3, 1.2, 0.5))
+    # El estimador de p0 sigue funcionando para los parámetros libres
+    assert np.allclose(m.p0(x, 3 * np.exp(-x / 1.2) + 0.5), [3, 1.2], rtol=0.1)
+    # Fijar sobre fijado acumula
+    m2 = m.fijar({"tau": 1.0})
+    assert m2.parametros == ("A",) and m2.fijos == {"C": 0.5, "tau": 1.0} and m2.original is base
+
+
+def test_fijar_detecta_linealidad_y_plausibilidad():
+    assert not CATALOGO["potencia"].lineal
+    assert CATALOGO["potencia"].fijar({"b": 2}).lineal  # A·x² es lineal en A
+    g = CATALOGO["gaussiana"].fijar({"C": 0})
+    x = np.linspace(-5, 5, 30)
+    assert g.comprobar_plausibilidad([1, 0, 1], x) is None
+    assert "fuera del rango" in g.comprobar_plausibilidad([1, 20, 1], x)
+
+
+def test_fijar_errores():
+    with pytest.raises(ErrorModelo):
+        CATALOGO["lineal"].fijar({"z": 1})
+    with pytest.raises(ErrorModelo):
+        CATALOGO["lineal"].fijar({"a": 1, "b": 2})
+    assert CATALOGO["lineal"].fijar({}) is CATALOGO["lineal"]

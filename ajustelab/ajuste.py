@@ -89,8 +89,48 @@ class ResultadoAjuste:
     def parametros(self) -> dict[str, tuple[float, float]]:
         return {n: (float(v), float(e)) for n, v, e in zip(self.nombres, self.p, self.sigma_p)}
 
+    @property
+    def fijos(self) -> dict[str, float]:
+        """Parámetros que se mantuvieron fijos durante el ajuste."""
+        return dict(self.modelo.fijos)
+
     def evaluar(self, x) -> np.ndarray:
         return self.modelo(x, *self.p)
+
+    def sigma_f(self, x) -> np.ndarray:
+        """Incertidumbre (1σ) de la curva ajustada en x: √(J C Jᵀ)."""
+        x = np.atleast_1d(np.asarray(x, dtype=float))
+        J = self.modelo.jacobiano(x, self.p)
+        return np.sqrt(np.clip(np.einsum("ij,jk,ik->i", J, self.cov, J), 0, None))
+
+    def inversa(self, y0: float, sigma_y0: float = 0.0, intervalo: tuple[float, float] | None = None
+                ) -> list[tuple[float, float]]:
+        """x tales que f(x) = y0, con su incertidumbre (curvas de calibración).
+
+        σ_x = √(σ_f(x)² + σ_y0²) / |f'(x)|, donde σ_f es la incertidumbre de la
+        curva y σ_y0 la de la medida y0. Busca en el rango de los datos salvo que
+        se indique ``intervalo``. Devuelve [(x, σ_x), ...] ordenado por x.
+        """
+        from scipy.optimize import brentq
+
+        lo, hi = intervalo if intervalo is not None else (float(np.min(self.datos.x)), float(np.max(self.datos.x)))
+        xs = np.linspace(lo, hi, 4001)
+        with np.errstate(all="ignore"):
+            g = self.evaluar(xs) - y0
+        soluciones = []
+        for i in range(xs.size - 1):
+            if not (np.isfinite(g[i]) and np.isfinite(g[i + 1])):
+                continue
+            if g[i] == 0:
+                x0 = float(xs[i])
+            elif g[i] * g[i + 1] < 0:
+                x0 = brentq(lambda t: float(self.evaluar(np.array([t]))[0] - y0), xs[i], xs[i + 1], xtol=1e-14)
+            else:
+                continue
+            pendiente = float(self.modelo.derivada_x(np.array([x0]), self.p)[0])
+            sx = float(np.hypot(self.sigma_f(x0)[0], sigma_y0) / abs(pendiente)) if pendiente != 0 else np.inf
+            soluciones.append((x0, sx))
+        return soluciones
 
     def bondad(self):
         from .estadistica import bondad
@@ -209,6 +249,7 @@ def ajustar(
     *,
     p0: Sequence[float] | None = None,
     limites: tuple[Sequence[float], Sequence[float]] | None = None,
+    fijos: dict[str, float] | None = None,
     usar_dx: bool = True,
     n_inicios: int = 12,
     semilla: int = 0,
@@ -221,10 +262,14 @@ def ajustar(
     p0 : valores iniciales (solo modelos no lineales). Si no se dan, se usa el
         estimador del modelo y se añaden ``n_inicios`` arranques aleatorios.
     limites : (inferiores, superiores) para cada parámetro (usa ``np.inf``).
+    fijos : {nombre: valor} de parámetros que no se ajustan (p. ej. un fondo
+        conocido). ``p0`` y ``limites`` se refieren entonces solo a los libres.
     usar_dx : si es False, ignora σ_x aunque exista.
     """
     if isinstance(modelo, str):
         modelo = obtener(modelo)
+    if fijos:
+        modelo = modelo.fijar(fijos)
     d = datos.activos()
     x, y, n, k = d.x, d.y, d.n, modelo.k
     if n < k:

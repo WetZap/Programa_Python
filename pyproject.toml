@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ajustelab"
-version = "1.0.0"
+version = "1.1.0"
 description = "Ajuste de datos experimentales con base estadística (χ², varianza efectiva, selección de modelos)"
 readme = "README.md"
 license = "MIT"
@@ -38,6 +38,9 @@ test = ["pytest>=8"]
 
 [tool.setuptools.packages.find]
 include = ["ajustelab*"]
+
+[tool.setuptools.package-data]
+ajustelab = ["gui/recursos/*"]  # imagen del easter egg (Ayuda → Acerca de)
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

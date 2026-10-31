@@ -323,12 +323,14 @@ def informe(res: "ResultadoAjuste") -> str:
         "",
         "Parámetros (1σ):",
     ]
-    ancho = max(len(nm) for nm in m.parametros) if m.k else 1
+    ancho = max(len(nm) for nm in (*m.parametros, *m.fijos)) if (m.k or m.fijos) else 1
     for nm, v, e in zip(m.parametros, res.p, res.sigma_p):
         extra = ""
         if b.factor_escala > 1:
             extra = f"    [con σ×√χ²_ν: {formatear(v, e * b.factor_escala)}]"
         lineas.append(f"  {nm:>{ancho}} = {formatear(v, e)}    ({v:.10g} ± {e:.4g}){extra}")
+    for nm, v in m.fijos.items():
+        lineas.append(f"  {nm:>{ancho}} = {v:.10g}    (fijo)")
     if m.k > 1:
         lineas += ["", "Matriz de correlación:"]
         lineas.append(" " * (ancho + 2) + "".join(f"{nm:>9}" for nm in m.parametros))

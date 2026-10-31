@@ -58,8 +58,11 @@ o como **biblioteca de Python**.
 - **Intersección de dos curvas** cualesquiera con su matriz de covarianza y elipse de confianza.
 - **Resultados listos para el informe**: redondeo con la regla del PDG, tabla de parámetros en LaTeX,
   gráficas PNG/PDF/SVG a 300 ppp, tramos de spline en LaTeX/CSV.
-- **Interfaz** con tema claro/oscuro que sigue al sistema, cálculos en segundo plano y exclusión de
-  puntos con un clic. Funciona en **Windows, macOS y Linux** (X11 y Wayland).
+- **Interfaz cómoda**: vista previa del modelo, parámetros fijos y con límites, exclusión de puntos
+  con un clic o por región, rango de ajuste arrastrando, deshacer/rehacer, comparación de modelos
+  superpuestos, sesiones `.ajustelab`, exportación para publicación y coma decimal opcional.
+- **Tema claro/oscuro** que sigue al sistema y cálculos en segundo plano. Funciona en **Windows,
+  macOS y Linux** (X11 y Wayland).
 
 ---
 
@@ -161,43 +164,96 @@ pytest -m "not lento"
 
 ```bash
 ajustelab                    # abre la ventana
-ajustelab medidas.csv        # abre la ventana con un fichero
+ajustelab medidas.csv        # abre la ventana con un fichero (o una sesión .ajustelab)
 python -m ajustelab          # equivalente
 ```
 
-1. **Carga los datos**: *Archivo → Abrir* (Ctrl+O), arrastra el fichero a la ventana, pega una tabla
-   copiada de LibreOffice/Excel (Ctrl+Mayús+V) o escribe directamente en la tabla.
-2. **Comprueba las columnas** x, y, σx y σy. Se asignan solas (ver [convenio](#asignación-de-columnas)),
-   y σ puede ser una columna, ninguna o un valor *constante* (p. ej. la resolución del instrumento).
-3. Elige una pestaña:
+![Pantalla de bienvenida](docs/capturas/bienvenida_claro.png)
+
+### Flujo de trabajo
+
+1. **Carga los datos.** Usa *Abrir* (Ctrl+O), arrastra el fichero a la ventana, pega una tabla copiada de
+   LibreOffice o Excel (Ctrl+Mayús+V) o escribe en una tabla vacía. Si es la primera vez, *Datos de
+   ejemplo* carga cinco conjuntos sintéticos, uno por cada tipo de análisis.
+2. **Comprueba las columnas** x, y, σx y σy. Se asignan solas (ver [convenio](#asignación-de-columnas)).
+   σ puede ser una columna, ninguna o un valor *constante* (p. ej. la resolución del instrumento).
+3. **Elige una pestaña** y pulsa **Ctrl+Intro**:
 
 | Pestaña | Qué hace |
 |---|---|
-| **Ajuste** | Ajusta un modelo del catálogo o una expresión propia. Muestra parámetros, informe completo, banda de confianza (68/95 %) y residuos normalizados. |
-| **Selección de modelo** | Prueba los 20 modelos automáticos (más los que añadas) y los ordena. ★ recomendado, ✓ compatible, ✗ incompatible. Doble clic → lo pasa a *Ajuste*. |
-| **Interpolación** | Construye el interpolante y calcula f(x), f′(x), x tal que f(x) = y₀ e integrales, con error por Monte Carlo. Exporta los tramos. |
+| **Ajuste** | Ajusta un modelo del catálogo o una expresión propia. Tiene una tabla de parámetros con valor inicial, casilla *Fijo* y límites mín/máx, y una vista previa con los valores iniciales. Debajo están *Resumen* (veredicto, χ²/ν, p-valor, R²), *Informe* (texto y LaTeX) y *Evaluar* (f(x) ± σ, y la x que da un y₀ ± σ). |
+| **Selección de modelo** | Prueba los 20 modelos automáticos (más los que añadas) y los ordena por AICc o BIC: ★ recomendado, ✓ compatible, ✗ incompatible. La columna *Ver* superpone hasta tres modelos en la gráfica para compararlos. Con doble clic, el modelo pasa a *Ajuste*. |
+| **Interpolación** | Construye el interpolante y calcula f(x), f′(x), la x tal que f(x) = y₀ e integrales, con error por Monte Carlo. Exporta los tramos. |
 | **Intersección** | Divide la tabla en dos conjuntos (los *n* primeros puntos y el resto), ajusta cada uno y calcula el punto de corte con su elipse de confianza. |
 
-4. **Excluye puntos con un clic** sobre la gráfica: la fila se tacha en la tabla y el ajuste se
-   recalcula al momento. Otro clic lo vuelve a incluir; *Datos → Incluir todos los puntos* los
-   recupera todos.
-5. **Exporta**: *Archivo → Exportar gráfica* (PNG/PDF/SVG, 300 ppp), *Guardar informe*
-   (texto de la pestaña activa) y *Copiar parámetros (LaTeX)*.
+### Trabajar sobre la gráfica
+
+- **Clic en un punto**: lo excluye o lo vuelve a incluir. La fila se tacha y el ajuste se recalcula al momento.
+- **Región**: arrastra un rectángulo para excluir de una vez todos los puntos que encierra.
+- **Rango**: arrastra en horizontal para ajustar solo un intervalo de x. Los puntos de fuera quedan en
+  gris y se recuperan con *Quitar rango*.
+- **Cuadro de resultados**: muestra la ecuación, los parámetros, χ²/ν y p. Se puede arrastrar a donde
+  estorbe menos, y su posición se guarda.
+- **Bandas**: de confianza al 68 % o al 95 % (incertidumbre de la curva) o de predicción al 95 %
+  (además, la dispersión de una medida nueva).
+- **Personalizar**: título y etiquetas (admiten LaTeX, p. ej. `$V_0$ (V)`), tamaño de letra, leyenda y rejilla.
+
+Todo lo que cambia los datos se puede **deshacer y rehacer** (Ctrl+Z / Ctrl+Mayús+Z): editar celdas,
+pegar, renombrar columnas, excluir puntos o fijar el rango.
+
+### Parámetros fijos y límites
+
+En la tabla de parámetros de *Ajuste*:
+
+- **Fijo** mantiene un parámetro en su valor inicial, por ejemplo el fondo C medido aparte. El ajuste
+  se hace solo con los demás y los grados de libertad se cuentan bien.
+- **Mín/Máx** acota un parámetro, por ejemplo τ > 0.
+- **Usar resultado** copia los valores ajustados como iniciales para el siguiente intento.
+
+Antes de ajustar se comprueban las incoherencias (mín > máx, inicial fuera de límites, todos fijos) y
+se marcan en rojo.
+
+### Exportar y guardar
+
+| Acción | Resultado |
+|---|---|
+| *Exportar gráfica* (Ctrl+E) | PNG/PDF/SVG con tamaño en cm (presets de 1 o 2 columnas), resolución en ppp, estilo *publicación* (fondo blanco aunque uses el tema oscuro) o *pantalla*, y fondo transparente opcional. |
+| *Copiar gráfica* (Ctrl+Mayús+C) | La gráfica como imagen en el portapapeles, lista para pegar en Word, LibreOffice o Slides. |
+| *Copiar LaTeX* (pestaña *Informe*) | Tabla `tabular` con los parámetros redondeados. |
+| *Guardar sesión* (Ctrl+S) | Fichero `.ajustelab` (JSON) con la tabla, las columnas, los puntos excluidos, el rango, el modelo con sus parámetros fijos y límites, las opciones de la gráfica y la pestaña activa. Al abrirlo se recupera todo y se rehace el ajuste. |
+| *Guardar informe* / *Exportar tabla* | Texto de la pestaña activa / datos en csv, xlsx… |
+
+*Abrir reciente* recuerda los 8 últimos ficheros. Al cerrar o abrir otro fichero con cambios sin guardar,
+el programa pregunta antes de descartarlos.
+
+### Personalización de la ventana
+
+- **Tema**: *Ver → Tema* (sistema, claro u oscuro). Con *sistema* sigue al escritorio en vivo; en
+  Windows 11 y macOS usa el estilo nativo y en Linux, Fusion.
+- **Coma decimal**: *Ver → Coma decimal* muestra los resultados como `1,71 ± 0,05` en la interfaz,
+  en la gráfica y en el LaTeX (`{,}`).
+- **Paneles**: *Datos* y *Análisis* son paneles acoplables. Se pueden mover, desacoplar u ocultar, y la
+  disposición se recuerda. *Ver → Restablecer disposición* vuelve a la original.
 
 ### Atajos
 
 | Atajo | Acción |
 |---|---|
-| Ctrl+O | Abrir fichero |
-| Ctrl+N | Tabla vacía |
+| Ctrl+O | Abrir datos o sesión |
+| Ctrl+S / Ctrl+Mayús+S | Guardar sesión / guardar como |
+| Ctrl+N | Nueva sesión |
 | Ctrl+Mayús+V | Pegar el portapapeles como tabla nueva |
+| Ctrl+Z / Ctrl+Mayús+Z (o Ctrl+Y) | Deshacer / rehacer |
+| Ctrl+Intro | Ejecutar la pestaña activa |
+| Ctrl+1 … Ctrl+4 | Ir a Ajuste, Selección, Interpolación, Intersección |
+| Ctrl+E / Ctrl+Mayús+C | Exportar gráfica / copiarla al portapapeles |
 | Ctrl+C / Ctrl+V (en la tabla) | Copiar la selección / pegar un bloque desde la celda actual |
 | Supr (en la tabla) | Vaciar las celdas seleccionadas |
 | Doble clic en una cabecera | Renombrar la columna |
-| Ctrl+E | Exportar gráfica |
-| Ctrl+S | Guardar el informe de la pestaña activa |
 
-En macOS, Ctrl equivale a ⌘.
+En macOS, Ctrl equivale a ⌘. La lista también está en *Ayuda → Atajos de teclado*.
+
+> **Pista:** en *Ayuda → Acerca de* hay algo más que la versión. 😉
 
 ---
 
@@ -245,6 +301,7 @@ con `;` para que la coma decimal no sea ambigua.
 ## Uso desde Python
 
 ```python
+import numpy as np
 from ajustelab import cargar, ajustar, seleccionar, interpolar, intersecar_datos, dividir
 
 datos = cargar("ejemplos/descarga_rc.csv")          # detecta formato y columnas
@@ -255,6 +312,11 @@ tau, sigma_tau = res.parametros["tau"]
 b = res.bondad()                                     # χ², p-valor, rachas, AICc...
 print(b.chi2_red, b.p_valor, b.avisos)
 f, inferior, superior = res.banda([1.0, 2.0], nivel=0.95)
+
+res = ajustar(datos, "exponencial_fondo", fijos={"C": 0.32},        # C fijo
+              limites=([-np.inf, 0], [np.inf, np.inf]))               # τ ≥ 0 (libres: A, tau)
+print(res.sigma_f([1.0, 2.0]))                       # σ de la curva en esos x
+print(res.inversa(2.0, sigma_y0=0.04))               # [(x, σx)] tal que f(x) = 2.0
 
 sel = seleccionar(datos)                             # selección automática
 print(sel.resumen())
@@ -397,6 +459,8 @@ calibraciones sin ruido. Con datos ruidosos usa el *spline de suavizado* o, mejo
 | `suavizado` | Datos con ruido: spline penalizado, pesos 1/σ² y λ por validación cruzada |
 | `polinomio` | Pocos puntos (fenómeno de Runge con más de 10) |
 
+![Spline de suavizado con f(x), f′(x), inversa e integral con error por Monte Carlo](docs/capturas/interpolacion_claro.png)
+
 ---
 
 ## Validación
@@ -434,7 +498,15 @@ Programa_Python/
 │   ├── interpolacion.py   # splines, PCHIP, Akima, suavizado, Monte Carlo
 │   ├── interseccion.py    # corte de dos curvas con covarianza
 │   ├── cli.py             # ajustelab-cli
-│   └── gui/               # interfaz PySide6: app, tema, tabla, gráfica, paneles, trabajos
+│   └── gui/               # interfaz PySide6
+│       ├── app.py         #   ventana, menús, paneles acoplables, deshacer, sesiones
+│       ├── tabla.py       #   tabla editable (con deshacer) y asignación de columnas
+│       ├── grafica.py     #   gráfica, región/rango, cuadro de resultados
+│       ├── paneles.py     #   pestañas de análisis
+│       ├── dialogos.py    #   personalizar y exportar gráfica
+│       ├── sesion.py      #   ficheros .ajustelab
+│       ├── tema.py, estilo.py, iconos.py, widgets.py, ejemplos.py, acerca.py, trabajos.py
+│       └── recursos/      #   imágenes (ver LEEME.txt)
 ├── tests/                 # pytest (núcleo, Monte Carlo, interfaz, terminal)
 ├── ejemplos/              # datos sintéticos y demos
 ├── docs/capturas/
@@ -450,7 +522,7 @@ Programa_Python/
 ```bash
 pip install -e ".[test]"
 pytest -m "not lento"      # rápido (~1 min): todo menos las validaciones Monte Carlo largas
-pytest                     # completo (~2-3 min)
+pytest                     # completo (~3-4 min)
 pytest -m gui              # solo la interfaz (sin pantalla)
 ```
 
