@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ajustelab"
-version = "1.1.0"
+version = "1.2.0"
 description = "Ajuste de datos experimentales con base estadística (χ², varianza efectiva, selección de modelos)"
 readme = "README.md"
 license = "MIT"
@@ -24,7 +24,7 @@ dependencies = [
 ]
 
 [project.gui-scripts]
-ajustelab = "ajustelab.gui.app:main"
+ajustelab = "ajustelab.lanzador:main"
 
 [project.scripts]
 ajustelab-cli = "ajustelab.cli:main"

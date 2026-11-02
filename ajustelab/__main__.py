@@ -1,6 +1,6 @@
-"""``python -m ajustelab [fichero]`` abre la interfaz."""
+"""``python -m ajustelab [fichero] [opciones]``: igual que la orden ``ajustelab``."""
 import sys
 
-from .gui.app import main
+from .lanzador import main
 
 sys.exit(main())

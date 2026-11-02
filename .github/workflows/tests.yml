@@ -1,6 +1,10 @@
 # Ejecuta los tests en Linux, Windows y macOS con la versión de Python más
 # antigua soportada, la 3.13 y la más reciente (3.14). La interfaz se prueba sin pantalla
 # (QT_QPA_PLATFORM=offscreen).
+#
+# Además, prueba el instalador de Linux (instalar.sh) en contenedores limpios de
+# varias distribuciones: instala Python y las bibliotecas que necesita Qt con el
+# gestor de paquetes de cada una, y abre la ventana de verdad en X11 (Xvfb).
 name: tests
 
 on:
@@ -25,7 +29,7 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Bibliotecas de sistema que necesita Qt (solo Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3 desktop-file-utils
       - name: Instalar
         run: python -m pip install -e . pytest
       - name: Tests rápidos (incluye la interfaz)
@@ -33,3 +37,71 @@ jobs:
       - name: Validación Monte Carlo completa
         if: runner.os == 'Linux' && matrix.python == '3.14'
         run: python -m pytest -m lento
+
+  instalador-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: ShellCheck (POSIX sh)
+        run: shellcheck -s sh instalar.sh
+      - name: Sintaxis en dash, bash y busybox
+        run: |
+          dash -n instalar.sh
+          bash -n instalar.sh
+          sudo apt-get install -y -qq busybox >/dev/null && busybox sh -n instalar.sh
+
+  instalador-distros:
+    name: instalar.sh en ${{ matrix.imagen }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # «preparar» solo deja lo que actions/checkout necesita (tar y gzip) y
+          # sincroniza la base de datos de pacman; Python y las bibliotecas de Qt
+          # las tiene que instalar instalar.sh.
+          - imagen: archlinux:latest
+            preparar: pacman -Syu --noconfirm --needed tar gzip
+            herramientas: pacman -S --needed --noconfirm xorg-server-xvfb desktop-file-utils
+          - imagen: debian:stable
+            preparar: "true"
+            herramientas: apt-get update -qq && apt-get install -y -qq xvfb desktop-file-utils
+          - imagen: ubuntu:22.04  # Python 3.10, la versión mínima
+            preparar: "true"
+            herramientas: apt-get update -qq && apt-get install -y -qq xvfb desktop-file-utils
+          - imagen: fedora:latest
+            preparar: dnf install -y tar gzip
+            herramientas: dnf install -y xorg-x11-server-Xvfb desktop-file-utils
+          - imagen: opensuse/tumbleweed
+            preparar: zypper --non-interactive install tar gzip
+            herramientas: zypper --non-interactive install xorg-x11-server-Xvfb desktop-file-utils
+    runs-on: ubuntu-latest
+    container: ${{ matrix.imagen }}
+    env:
+      LANG: C.UTF-8
+    steps:
+      - name: Preparar el contenedor
+        run: ${{ matrix.preparar }}
+      - uses: actions/checkout@v5
+      - name: Instalar con instalar.sh (instala Python y las bibliotecas de Qt)
+        run: sh instalar.sh -y
+      - name: Órdenes instaladas y diagnóstico
+        run: |
+          "$HOME/.local/bin/ajustelab" --version
+          "$HOME/.local/bin/ajustelab-cli" --help > /dev/null
+          "$HOME/.local/bin/ajustelab" --diagnostico
+      - name: Herramientas de prueba (Xvfb, desktop-file-validate)
+        run: ${{ matrix.herramientas }}
+      - name: Entrada del menú válida
+        run: desktop-file-validate "$HOME/.local/share/applications/ajustelab.desktop"
+      - name: Abrir la ventana en X11 (plugin xcb)
+        run: |
+          Xvfb :99 -screen 0 1280x800x24 &
+          sleep 3
+          DISPLAY=:99 QT_QPA_PLATFORM=xcb "$HOME/.local/bin/ajustelab" --probar-interfaz
+      - name: Volver a ejecutar (actualizar) y desinstalar
+        run: |
+          sh instalar.sh -y
+          sh instalar.sh -y --desinstalar
+          test ! -e "$HOME/.local/bin/ajustelab"
+          test ! -e "$HOME/.local/share/applications/ajustelab.desktop"
+          test ! -e "$HOME/.local/share/ajustelab"

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Callable
 
-from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtCore import QPointF, QRectF, QSize, Qt
 from PySide6.QtGui import QGuiApplication, QIcon, QIconEngine, QPainter, QPainterPath, QPalette, QPen, QPixmap
 
 _Dibujo = Callable[[QPainter], None]
@@ -241,4 +241,20 @@ def icono(nombre: str, nativo: bool = False) -> QIcon:
     if ic.isNull():
         ic = QIcon(_MotorIcono(_DIBUJOS[nombre]))
     _cache[clave] = ic
+    return ic
+
+
+def icono_aplicacion() -> QIcon:
+    """Icono de ajustelab (ventana, barra de tareas y Dock), en todos los tamaños.
+
+    En Wayland el compositor lo toma de la entrada del menú (``ajustelab.desktop``),
+    que se instala con ``ajustelab --instalar-escritorio``."""
+    from pathlib import Path
+
+    recursos = Path(__file__).resolve().parent / "recursos"
+    ic = QIcon()
+    for n in (16, 24, 32, 48, 64, 128, 256, 512):
+        ruta = recursos / f"icono-{n}.png"
+        if ruta.is_file():
+            ic.addFile(str(ruta), QSize(n, n))
     return ic

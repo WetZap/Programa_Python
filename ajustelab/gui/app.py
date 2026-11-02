@@ -8,6 +8,7 @@ restablecer desde Ver). La disposición se recuerda entre sesiones.
 """
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -15,7 +16,7 @@ import matplotlib
 
 matplotlib.use("QtAgg")
 
-from PySide6.QtCore import QSettings, QSize, Qt, QThreadPool, QTimer, QUrl  # noqa: E402
+from PySide6.QtCore import QSettings, QSize, Qt, QThreadPool, QTimer, QUrl, qInstallMessageHandler  # noqa: E402
 from PySide6.QtGui import (QAction, QActionGroup, QDesktopServices, QGuiApplication, QKeySequence,  # noqa: E402
                            QUndoStack)
 from PySide6.QtWidgets import (QApplication, QDialog, QDockWidget, QFileDialog, QInputDialog, QLabel,  # noqa: E402
@@ -29,7 +30,7 @@ from .acerca import DialogoAcercaDe, ImagenFlotante  # noqa: E402
 from .dialogos import DialogoPersonalizar, copiar_figura, exportar, renderizar  # noqa: E402
 from .estilo import hoja_estilo  # noqa: E402
 from .grafica import COLORES_PUBLICACION, Escena, Grafica, con_coma  # noqa: E402
-from .iconos import icono  # noqa: E402
+from .iconos import icono, icono_aplicacion  # noqa: E402
 from .paneles import PanelAjuste, PanelInterpolacion, PanelInterseccion, PanelSeleccion  # noqa: E402
 from .tabla import PanelDatos  # noqa: E402
 from .tema import GestorTema  # noqa: E402
@@ -726,18 +727,91 @@ class VentanaPrincipal(QMainWindow):
         return ImagenFlotante(self).mostrar()
 
 
-def main(argv: list[str] | None = None) -> int:
-    argv = sys.argv if argv is None else argv
+# Avisos de Qt que no indican ningún problema y solo llenan la terminal
+_RUIDO_QT = ("propagateSizeHints", "does not support QWindow::requestActivate",
+             "Wayland does not support QWindow::setWindowIcon")
+
+
+def _filtrar_mensajes_qt() -> None:
+    if os.environ.get("AJUSTELAB_DEPURAR"):
+        return
+    anterior = None
+
+    def manejador(tipo, contexto, mensaje):
+        if any(r in mensaje for r in _RUIDO_QT):
+            return
+        if anterior is not None:
+            anterior(tipo, contexto, mensaje)
+        else:
+            print(mensaje, file=sys.stderr)
+
+    anterior = qInstallMessageHandler(manejador)
+
+
+def crear_aplicacion(argv: list[str]) -> QApplication:
+    """QApplication con nombre, icono e identificador de escritorio.
+
+    ``setDesktopFileName`` es el *app_id* en Wayland: con él GNOME, KDE y el resto
+    asocian la ventana a ``ajustelab.desktop`` y muestran su icono en el dock."""
+    _filtrar_mensajes_qt()
     app = QApplication.instance() or QApplication(argv)
     app.setApplicationName("ajustelab")
+    app.setApplicationDisplayName("ajustelab")
     app.setOrganizationName("WetZap")
     app.setApplicationVersion(__version__)
+    QGuiApplication.setDesktopFileName("ajustelab")
+    app.setWindowIcon(icono_aplicacion())
+    return app
+
+
+def main(argv: list[str] | None = None, fichero: str | None = None) -> int:
+    argv = sys.argv if argv is None else argv
+    if fichero is None and len(argv) > 1 and not argv[1].startswith("-"):
+        fichero = argv[1]  # compatibilidad: main(["ajustelab", "datos.csv"])
+        argv = [argv[0], *argv[2:]]
+    app = crear_aplicacion(argv)
     tema = GestorTema(app)
     ventana = VentanaPrincipal(tema)
     ventana.show()
-    if len(argv) > 1:
-        ventana.abrir(argv[1])
+    if fichero:
+        ventana.abrir(fichero)
     return app.exec()
+
+
+def probar(argv: list[str] | None = None) -> int:
+    """``ajustelab --probar-interfaz``: crea la ventana, carga un ejemplo, ajusta y
+    sale. No toca los ajustes del usuario (se guardan en una carpeta temporal)."""
+    import tempfile
+    import time
+
+    from PySide6.QtCore import qVersion
+
+    temporal = tempfile.TemporaryDirectory(prefix="ajustelab-prueba-")
+    QSettings.setDefaultFormat(QSettings.IniFormat)
+    QSettings.setPath(QSettings.IniFormat, QSettings.UserScope, temporal.name)
+    app = crear_aplicacion(sys.argv[:1] if argv is None else argv)
+    inicio = time.monotonic()
+    tema = GestorTema(app)
+    ventana = VentanaPrincipal(tema)
+    ventana.show()
+    ventana.abrir_ejemplo("descarga")
+    ventana.ejecutar_pestana()
+    for _ in range(200):
+        app.processEvents()
+        if ventana.esperar_trabajos(50) and ventana.p_ajuste.resultado is not None:
+            break
+    app.processEvents()
+    res = ventana.p_ajuste.resultado
+    ventana.pila.setClean()
+    ventana.close()
+    app.processEvents()
+    if res is None:
+        print("✗ La ventana se abrió, pero el ajuste de prueba no terminó.", file=sys.stderr)
+        return 1
+    print(f"✓ La interfaz funciona: plataforma «{app.platformName()}», Qt {qVersion()}, "
+          f"tema {'oscuro' if tema.oscuro else 'claro'} ({tema.estilo}); ajuste de prueba en "
+          f"{time.monotonic() - inicio:.1f} s.")
+    return 0
 
 
 if __name__ == "__main__":
