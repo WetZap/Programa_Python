@@ -148,7 +148,7 @@ def test_instalar_y_desinstalar(tmp_path):
     orden = [str(tmp_path / "con espacio" / "ajustelab")]
     Path(orden[0]).parent.mkdir()
     Path(orden[0]).write_text("#!/bin/sh\n", encoding="utf-8")
-    escritos = escritorio.instalar(tmp_path, orden, refrescar=False)
+    escritos = escritorio.instalar(tmp_path, orden, refrescar=False, plataforma="xdg")
     assert set(escritos) == set(escritorio.ficheros(tmp_path))
     desktop = escritorio.ruta_desktop(tmp_path)
     cp = configparser.ConfigParser(interpolation=None, strict=True)
@@ -163,15 +163,16 @@ def test_instalar_y_desinstalar(tmp_path):
         assert (tmp_path / "icons" / "hicolor" / f"{n}x{n}" / "apps" / "ajustelab.png").stat().st_size > 100
     mime = (tmp_path / "mime" / "packages" / "ajustelab.xml").read_text(encoding="utf-8")
     assert 'glob pattern="*.ajustelab"' in mime and "application/x-ajustelab" in mime
-    assert escritorio.lanzador_valido(desktop)
+    assert escritorio.lanzador_valido(desktop) or escritorio.ES_WINDOWS
     if shutil.which("desktop-file-validate"):
         r = subprocess.run(["desktop-file-validate", str(desktop)], capture_output=True, text=True)
         assert r.returncode == 0 and not r.stdout.strip(), r.stdout
     Path(orden[0]).unlink()
-    assert not escritorio.lanzador_valido(desktop)  # el diagnóstico detecta una entrada rota
-    borrados = escritorio.desinstalar(tmp_path, refrescar=False)
+    if not escritorio.ES_WINDOWS:
+        assert not escritorio.lanzador_valido(desktop)  # el diagnóstico detecta una entrada rota
+    borrados = escritorio.desinstalar(tmp_path, refrescar=False, plataforma="xdg")
     assert set(borrados) == set(escritos) and not desktop.exists()
-    assert escritorio.desinstalar(tmp_path, refrescar=False) == []
+    assert escritorio.desinstalar(tmp_path, refrescar=False, plataforma="xdg") == []
 
 
 def test_orden_lanzar(tmp_path, monkeypatch):
@@ -188,6 +189,8 @@ def test_orden_lanzar(tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "base_prefix", "/usr")
     if os.name == "posix":
         assert escritorio.orden_lanzar() == [str(lanzador_sh)]
+    else:  # en Windows se usa el lanzador sin consola de pip o pythonw.exe
+        assert escritorio.orden_lanzar()[0].lower().endswith(("ajustelab.exe", "pythonw.exe", "python.exe"))
     lanzador_sh.write_text("#!/bin/sh\necho otro\n", encoding="utf-8")  # sin la marca: no se usa
     assert escritorio.orden_lanzar() != [str(lanzador_sh)]
 
@@ -215,18 +218,72 @@ def test_version_y_ayuda(capsys):
     assert "--diagnostico" in salida and "--instalar-escritorio" in salida and "--paquetes-sistema" not in salida
 
 
-def test_opciones_de_sistema(capsys, tmp_path, monkeypatch):
+CLAVE_PRUEBAS = r"Software\ajustelab-pruebas\Classes"
+
+
+@pytest.fixture
+def windows_aislado(tmp_path, monkeypatch):
+    """En Windows, menú Inicio en una carpeta temporal y asociación en una clave de pruebas."""
+    if not escritorio.ES_WINDOWS:
+        yield None
+        return
+    from ajustelab import windows
+
+    monkeypatch.setattr(windows, "carpeta_programas", lambda: tmp_path / "Programs")
+    monkeypatch.setattr(windows, "CLASES", CLAVE_PRUEBAS)
+    yield windows
+    windows._borrar_arbol(r"Software\ajustelab-pruebas")
+
+
+def test_opciones_de_sistema(capsys, tmp_path, monkeypatch, windows_aislado):
     assert lanzador.main(["ajustelab", "--diagnostico"]) in (0, 1)
     assert "diagnóstico" in capsys.readouterr().out
     assert lanzador.main(["ajustelab", "--paquetes-sistema"]) == 0
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
     codigo = lanzador.main(["ajustelab", "--instalar-escritorio"])
-    if sistema.es_linux():
-        assert codigo == 0 and escritorio.ruta_desktop(tmp_path).is_file()
+    if sistema.es_linux() or escritorio.ES_WINDOWS:
+        entrada = escritorio.ruta_entrada(None if escritorio.ES_WINDOWS else tmp_path)
+        assert codigo == 0 and entrada.is_file()
         assert lanzador.main(["ajustelab", "--desinstalar-escritorio"]) == 0
-        assert not escritorio.ruta_desktop(tmp_path).exists()
+        assert not entrada.exists()
     else:
         assert codigo == 2
+
+
+@pytest.mark.skipif(not escritorio.ES_WINDOWS, reason="solo en Windows")
+def test_windows_acceso_y_asociacion(tmp_path, windows_aislado):
+    """Acceso directo con su AppUserModelID y asociación de .ajustelab (comprobados con el Shell)."""
+    w = windows_aislado
+    orden = escritorio.orden_lanzar()
+    lnk, = escritorio.instalar(tmp_path / "Programs", orden, plataforma="windows", clases=CLAVE_PRUEBAS)
+    assert lnk.is_file() and lnk.name == "ajustelab.lnk"
+    script = ("$s = (New-Object -ComObject WScript.Shell).CreateShortcut($env:AJ_LNK); "
+              "$i = (New-Object -ComObject Shell.Application).NameSpace($env:AJ_DIR).ParseName('ajustelab.lnk'); "
+              "Write-Output $s.TargetPath; Write-Output $s.IconLocation; "
+              "Write-Output $i.ExtendedProperty('System.AppUserModel.ID')")
+    r = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script], capture_output=True,
+                       text=True, env={**os.environ, "AJ_LNK": str(lnk), "AJ_DIR": str(lnk.parent)}, timeout=120)
+    destino, icono, app_id = (r.stdout.strip().splitlines() + ["", "", ""])[:3]
+    assert Path(destino) == Path(orden[0]), r.stderr
+    assert icono.lower().startswith(str(escritorio.RECURSOS / "icono.ico").lower())
+    assert app_id == w.APP_ID
+    assert w.leer_valor(f"{CLAVE_PRUEBAS}\\.ajustelab") == w.PROGID
+    comando = w.leer_valor(f"{CLAVE_PRUEBAS}\\{w.PROGID}\\shell\\open\\command")
+    assert comando.endswith('"%1"') and Path(orden[0]).name.lower() in comando.lower()
+    assert "icono.ico" in w.leer_valor(f"{CLAVE_PRUEBAS}\\{w.PROGID}\\DefaultIcon")
+    assert escritorio.lanzador_valido(lnk, clases=CLAVE_PRUEBAS)
+    assert escritorio.desinstalar(tmp_path / "Programs", plataforma="windows", clases=CLAVE_PRUEBAS) == [lnk]
+    assert not lnk.exists() and w.leer_valor(f"{CLAVE_PRUEBAS}\\.ajustelab") is None
+
+
+def test_diagnostico_redirigido():
+    """Redirigida (fichero, tubería), la salida va en UTF-8 aunque el sistema use cp1252."""
+    entorno = {k: v for k, v in os.environ.items() if k not in ("PYTHONIOENCODING", "PYTHONUTF8")}
+    r = subprocess.run([sys.executable, "-m", "ajustelab", "--diagnostico"], capture_output=True, env=entorno,
+                       timeout=120)
+    assert r.returncode in (0, 1), r.stderr.decode("utf-8", "replace")
+    texto = r.stdout.decode("utf-8")
+    assert "diagnóstico" in texto and ("✓" in texto or "✗" in texto)
 
 
 def test_importar_es_ligero():
@@ -249,3 +306,20 @@ def test_probar_interfaz():
                        text=True, env=entorno, timeout=300)
     assert r.returncode == 0, r.stderr
     assert "La interfaz funciona" in r.stdout and "offscreen" in r.stdout
+
+
+# --- instaladores -----------------------------------------------------------------
+RAIZ = Path(__file__).resolve().parents[1]
+
+
+def test_instaladores_codificacion():
+    """instalar.ps1 sin BOM («irm | iex» no lo admite) y sin caracteres que, leídos como
+    CP1252 por Windows PowerShell 5.1, se conviertan en comillas o guiones de PowerShell.
+    instalar.sh con fin de línea LF."""
+    ps1 = (RAIZ / "instalar.ps1").read_bytes()
+    assert not ps1.startswith(b"\xef\xbb\xbf")
+    texto = ps1.decode("utf-8")
+    peligrosos = {c for c in set(texto) if ord(c) > 0x7F and any(
+        x in c.encode("utf-8").decode("cp1252", errors="replace") for x in "‘’‚‛“”„–—―")}
+    assert not peligrosos, peligrosos
+    assert b"\r\n" not in (RAIZ / "instalar.sh").read_bytes()

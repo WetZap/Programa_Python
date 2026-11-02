@@ -754,6 +754,10 @@ def crear_aplicacion(argv: list[str]) -> QApplication:
     ``setDesktopFileName`` es el *app_id* en Wayland: con él GNOME, KDE y el resto
     asocian la ventana a ``ajustelab.desktop`` y muestran su icono en el dock."""
     _filtrar_mensajes_qt()
+    if sys.platform == "win32":  # la barra de tareas agrupa la ventana con su acceso directo
+        from ..windows import fijar_app_id
+
+        fijar_app_id()
     app = QApplication.instance() or QApplication(argv)
     app.setApplicationName("ajustelab")
     app.setApplicationDisplayName("ajustelab")

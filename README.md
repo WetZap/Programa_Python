@@ -108,6 +108,37 @@ Si prefieres leer el script antes de ejecutarlo:
 `curl -fsSLO https://raw.githubusercontent.com/WetZap/Programa_Python/main/instalar.sh`, ábrelo y
 luego `sh instalar.sh`.
 
+### Windows 10/11: instalador de una línea (recomendado)
+
+En **PowerShell** (menú Inicio → «PowerShell»; no hace falta abrirlo como administrador):
+
+```powershell
+irm https://raw.githubusercontent.com/WetZap/Programa_Python/main/instalar.ps1 | iex
+```
+
+Es el equivalente del instalador de Linux. Todo queda en tu usuario, sin permisos de administrador:
+
+1. Busca Python ≥ 3.10 (lanzador `py` o PATH). Si no lo hay, ofrece instalar Python 3.13 con
+   `winget`, sin abrir ninguna web.
+2. Crea un entorno propio en `%LOCALAPPDATA%\Programs\ajustelab` e instala ajustelab ahí.
+3. Deja las órdenes `ajustelab` y `ajustelab-cli` en su carpeta `bin` y la añade al PATH de tu
+   usuario (en una terminal nueva ya funcionan).
+4. Crea el acceso directo del **menú Inicio** (y, si quieres, del escritorio) con su icono. Además,
+   asocia los ficheros `.ajustelab` para abrirlos con doble clic.
+5. Lo registra en **Configuración → Aplicaciones**, desde donde se desinstala como cualquier programa.
+6. Comprueba que la interfaz arranca.
+
+| | |
+|---|---|
+| **Actualizar** | Vuelve a ejecutar la misma línea (si ajustelab está abierto, ofrece cerrarlo). |
+| **Desinstalar** | Configuración → Aplicaciones → ajustelab → Desinstalar. |
+| **Sin preguntas** | `& ([scriptblock]::Create((irm https://raw.githubusercontent.com/WetZap/Programa_Python/main/instalar.ps1))) -Si` |
+| **Desde una copia clonada** | `powershell -ExecutionPolicy Bypass -File instalar.ps1` dentro del repositorio. |
+
+Funciona con Windows PowerShell 5.1 (el que trae Windows) y con PowerShell 7. Si prefieres leer el
+script antes, descárgalo con `irm …/instalar.ps1 -OutFile instalar.ps1`, ábrelo y ejecútalo con la
+última orden de la tabla.
+
 ### Con pipx (cualquier sistema)
 
 [pipx](https://pipx.pypa.io) instala la aplicación aislada y deja los comandos `ajustelab` y
@@ -115,30 +146,27 @@ luego `sh instalar.sh`.
 
 ```bash
 pipx install git+https://github.com/WetZap/Programa_Python
-ajustelab --instalar-escritorio      # Linux: añadirlo al menú de aplicaciones
+ajustelab --instalar-escritorio      # menú de aplicaciones (Linux) o menú Inicio (Windows)
 ajustelab
 ```
 
 ### Paso a paso por sistema operativo
 
 <details>
-<summary><b>Windows</b></summary>
+<summary><b>Windows, a mano</b></summary>
 
-1. Instala Python desde [python.org](https://www.python.org/downloads/). En el instalador, marca
-   **«Add python.exe to PATH»**.
-2. Abre *PowerShell* y ejecuta:
+1. Instala Python desde [python.org](https://www.python.org/downloads/) (marca **«Add python.exe to
+   PATH»**) o con `winget install Python.Python.3.13`.
+2. En *PowerShell*:
 
    ```powershell
-   py -m venv $HOME\ajustelab-venv
-   & $HOME\ajustelab-venv\Scripts\Activate.ps1
-   pip install https://github.com/WetZap/Programa_Python/archive/refs/heads/main.zip
-   ajustelab
+   py -m venv $env:LOCALAPPDATA\Programs\ajustelab\venv
+   & $env:LOCALAPPDATA\Programs\ajustelab\venv\Scripts\pip install https://github.com/WetZap/Programa_Python/archive/refs/heads/main.zip
+   & $env:LOCALAPPDATA\Programs\ajustelab\venv\Scripts\ajustelab --instalar-escritorio
    ```
 
-   Si PowerShell no deja activar el entorno, ejecuta antes
-   `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
-3. `ajustelab` se abre sin ventana de consola. Puedes crear un acceso directo a
-   `%USERPROFILE%\ajustelab-venv\Scripts\ajustelab.exe`.
+3. La última orden crea el acceso directo del menú Inicio y asocia los `.ajustelab`. `ajustelab.exe`
+   se abre sin ventana de consola.
 
 </details>
 
@@ -538,7 +566,8 @@ Programa_Python/
 │   ├── cli.py             # ajustelab-cli
 │   ├── lanzador.py        # orden ajustelab: opciones de sistema y arranque de la interfaz
 │   ├── sistema.py         # diagnóstico: distro, sesión X11/Wayland, bibliotecas de Qt
-│   ├── escritorio.py      # menú de aplicaciones, icono y tipo MIME (freedesktop)
+│   ├── escritorio.py      # menú de aplicaciones, icono y tipo de fichero (freedesktop y Windows)
+│   ├── windows.py         # acceso directo con AppUserModelID y asociación de .ajustelab
 │   └── gui/               # interfaz PySide6
 │       ├── app.py         #   ventana, menús, paneles acoplables, deshacer, sesiones
 │       ├── tabla.py       #   tabla editable (con deshacer) y asignación de columnas
@@ -552,6 +581,7 @@ Programa_Python/
 ├── ejemplos/              # datos sintéticos y demos
 ├── docs/capturas/
 ├── instalar.sh            # instalador para Linux
+├── instalar.ps1           # instalador para Windows
 ├── legacy/ProgramasUtiles.py   # script original, conservado como referencia
 ├── .github/workflows/tests.yml
 └── pyproject.toml
@@ -569,8 +599,9 @@ pytest -m gui              # solo la interfaz (sin pantalla)
 ```
 
 Los tests de la interfaz usan `QT_QPA_PLATFORM=offscreen`, así que no abren ventanas. El
-instalador se comprueba con `shellcheck -s sh instalar.sh`, y la CI lo ejecuta en contenedores de
-cinco distribuciones. Las
+instalador de Linux se comprueba con `shellcheck -s sh instalar.sh`, y la CI lo ejecuta en
+contenedores de cinco distribuciones. El de Windows pasa PSScriptAnalyzer y se prueba con Windows
+PowerShell 5.1 y PowerShell 7, también con `irm | iex`. Las
 contribuciones son bienvenidas mediante *fork* y *pull request*.
 
 ---
@@ -596,6 +627,9 @@ el PATH.
 | En Wayland, la ventana aparece con un icono genérico en el dock | En Wayland el icono sale de la entrada del menú: ejecuta `ajustelab --instalar-escritorio`. |
 | zsh pregunta `correct 'pip' to '_pip' [nyae]?` | Es la autocorrección de zsh: responde `n`. Para que no vuelva a pasar, usa `python -m pip ...` o añade `unsetopt correct` a `~/.zshrc`. |
 | La ventana no sigue el modo oscuro | Tu escritorio no informa del esquema de color: elige el tema en **Ver → Tema**. |
+| Windows: `irm` no funciona o dice que la ejecución de scripts está deshabilitada | `irm … \| iex` no ejecuta ningún fichero, así que la directiva de ejecución no le afecta. Si tu organización bloquea PowerShell, usa la instalación a mano o pipx. |
+| Windows: `ajustelab` no se reconoce justo después de instalar | Abre una terminal nueva: las que ya estaban abiertas no ven el PATH actualizado. Desde el menú Inicio funciona siempre. |
+| Windows: la barra de tareas muestra el icono de Python | Vuelve a crear el acceso directo con `ajustelab --instalar-escritorio` (o reinstala): el acceso y la ventana comparten identificador para agruparse. |
 | NixOS o Alpine | Los paquetes de Qt de PyPI no funcionan ahí: Alpine usa musl, y NixOS no tiene las bibliotecas en rutas estándar. En NixOS usa `python3Packages.pyside6` o activa `programs.nix-ld`. |
 | En Windows, los símbolos χ² o ± salen mal al redirigir la salida de `ajustelab-cli` | Usa `PYTHONIOENCODING=utf-8` o el informe con `-o informe.txt`, que siempre está en UTF-8. |
 

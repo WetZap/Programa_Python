@@ -24,7 +24,7 @@ ejemplos:
   ajustelab medidas.csv              abre la ventana con un fichero
   ajustelab practica.ajustelab       recupera una sesión guardada
   ajustelab --diagnostico            comprueba Python, Qt y las bibliotecas del sistema
-  ajustelab --instalar-escritorio    añade ajustelab al menú de aplicaciones (Linux)
+  ajustelab --instalar-escritorio    añade ajustelab al menú de aplicaciones o al menú Inicio
 
   QT_QPA_PLATFORM=xcb ajustelab      fuerza X11 (XWayland) si Wayland da problemas
   ajustelab-cli --help               versión de terminal, sin ventana
@@ -64,9 +64,10 @@ def _analizador() -> argparse.ArgumentParser:
     g.add_argument("--probar-interfaz", action="store_true",
                    help="crea la ventana, hace un ajuste de ejemplo y sale (comprueba la instalación)")
     g.add_argument("--instalar-escritorio", action="store_true",
-                   help="Linux: añade ajustelab al menú de aplicaciones, con icono y doble clic en .ajustelab")
+                   help="añade ajustelab al menú de aplicaciones (Linux) o al menú Inicio (Windows), con icono "
+                        "y doble clic en las sesiones .ajustelab")
     g.add_argument("--desinstalar-escritorio", action="store_true",
-                   help="Linux: quita ajustelab del menú de aplicaciones")
+                   help="quita lo que añade --instalar-escritorio")
     g.add_argument("--paquetes-sistema", action="store_true", help=argparse.SUPPRESS)  # lo usa instalar.sh
     return p
 
@@ -87,25 +88,83 @@ def _avisar(mensaje: str) -> None:
 def _escritorio(instalar: bool) -> int:
     from . import escritorio, sistema
 
-    if not sistema.es_linux() and not sys.platform.startswith(("freebsd", "openbsd", "netbsd")):
-        print("La integración con el menú es para escritorios Linux/BSD (freedesktop).\n"
-              "En Windows crea un acceso directo a «ajustelab.exe» de la carpeta Scripts del entorno; en macOS, "
-              "ejecuta «ajustelab» desde la Terminal.", file=sys.stderr)
+    if sys.platform == "darwin":
+        print("En macOS, ejecuta «ajustelab» desde la Terminal (la integración con el Dock aún no existe).",
+              file=sys.stderr)
         return 2
+    if not (escritorio.ES_WINDOWS or sistema.es_linux() or sys.platform.startswith(("freebsd", "openbsd", "netbsd"))):
+        print("Este sistema no tiene un menú de aplicaciones compatible.", file=sys.stderr)
+        return 2
+    menu = "menú Inicio" if escritorio.ES_WINDOWS else "menú de aplicaciones"
     try:
         if instalar:
             escritos = escritorio.instalar()
-            print(f"✓ ajustelab añadido al menú de aplicaciones ({escritos[0]}).")
+            print(f"✓ ajustelab añadido al {menu} ({escritos[0]}).")
             print(f"  Abre con: {' '.join(escritorio.orden_lanzar())}")
-            print("  Las sesiones .ajustelab se abren con doble clic. Si el icono no aparece, cierra y vuelve "
-                  "a abrir la sesión del escritorio.")
+            if escritorio.ES_WINDOWS:
+                print("  Las sesiones .ajustelab se abren con doble clic.")
+            else:
+                print("  Las sesiones .ajustelab se abren con doble clic. Si el icono no aparece, cierra y vuelve "
+                      "a abrir la sesión del escritorio.")
         else:
             borrados = escritorio.desinstalar()
-            print("✓ ajustelab quitado del menú." if borrados else "No había nada que quitar.")
+            print(f"✓ ajustelab quitado del {menu}." if borrados else "No había nada que quitar.")
     except (OSError, escritorio.ErrorEscritorio) as e:
         print(f"✗ {e}", file=sys.stderr)
         return 1
     return 0
+
+
+def _pid_padre(pid: int) -> int | None:
+    """PID del padre de ``pid`` en Windows (instantánea de procesos de toolhelp)."""
+    import ctypes
+    from ctypes import wintypes
+
+    class PROCESSENTRY32W(ctypes.Structure):
+        _fields_ = [("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD), ("th32ProcessID", wintypes.DWORD),
+                    ("th32DefaultHeapID", ctypes.c_size_t), ("th32ModuleID", wintypes.DWORD),
+                    ("cntThreads", wintypes.DWORD), ("th32ParentProcessID", wintypes.DWORD),
+                    ("pcPriClassBase", ctypes.c_long), ("dwFlags", wintypes.DWORD),
+                    ("szExeFile", ctypes.c_wchar * 260)]
+
+    k32 = ctypes.windll.kernel32
+    k32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    instantanea = k32.CreateToolhelp32Snapshot(0x2, 0)  # TH32CS_SNAPPROCESS
+    if not instantanea or instantanea == wintypes.HANDLE(-1).value:
+        return None
+    try:
+        e = PROCESSENTRY32W()
+        e.dwSize = ctypes.sizeof(e)
+        ok = k32.Process32FirstW(instantanea, ctypes.byref(e))
+        while ok:
+            if e.th32ProcessID == pid:
+                return int(e.th32ParentProcessID)
+            ok = k32.Process32NextW(instantanea, ctypes.byref(e))
+    finally:
+        k32.CloseHandle(instantanea)
+    return None
+
+
+def _consola_windows() -> None:
+    """En Windows, «ajustelab.exe» es un programa de ventana sin consola: lo que se
+    imprima con --version, --help o --diagnostico se perdería. Se engancha a la
+    consola de la terminal que lo lanzó (la del padre o, si el padre es el
+    lanzador de pip, la del abuelo)."""
+    if os.name != "nt" or (sys.stdout is not None and sys.stderr is not None):
+        return
+    import ctypes
+
+    k32 = ctypes.windll.kernel32
+    if not k32.AttachConsole(-1):  # ATTACH_PARENT_PROCESS
+        abuelo = _pid_padre(os.getppid())
+        if not abuelo or not k32.AttachConsole(abuelo):
+            return
+    try:
+        consola = open("CONOUT$", "w", encoding="utf-8")  # noqa: SIM115 — vive lo que el proceso
+    except OSError:
+        return
+    sys.stdout = sys.stderr = consola
+    print()  # la terminal ya ha mostrado el prompt
 
 
 def _paquetes_sistema() -> int:
@@ -122,9 +181,26 @@ def _paquetes_sistema() -> int:
     return 0
 
 
+def _salida_utf8() -> None:
+    """Con la salida redirigida a un fichero o a otro programa, se escribe en UTF-8.
+    En Windows sería cp1252, que no tiene «✓» ni «χ²» (y Python 3.15 ya usa UTF-8
+    por defecto). En una terminal no se toca: Python escribe bien en la consola."""
+    for nombre in ("stdout", "stderr"):
+        flujo = getattr(sys, nombre)
+        try:
+            codificacion = (flujo.encoding or "").lower().replace("-", "").replace("_", "")
+            if not flujo.isatty() and codificacion != "utf8":
+                flujo.reconfigure(encoding="utf-8")
+        except (AttributeError, OSError, ValueError):
+            pass
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv if argv is None else argv)
     propios, qt = separar_argumentos(argv[1:])
+    if any(a.startswith("-") for a in propios):
+        _consola_windows()
+    _salida_utf8()
     args = _analizador().parse_args(propios)
 
     if args.diagnostico:

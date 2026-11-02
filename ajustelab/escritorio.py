@@ -1,7 +1,11 @@
-"""Integración con los escritorios de Linux según los estándares de freedesktop.org.
+"""Integración con el escritorio: menú de aplicaciones, icono y doble clic en las
+sesiones ``.ajustelab``. Todo para el usuario, sin permisos de administrador.
 
-``ajustelab --instalar-escritorio`` instala, solo para el usuario y sin permisos de
-administrador:
+En **Windows** (ver ``windows.py``): acceso directo en el menú Inicio con el mismo
+AppUserModelID que la ventana, y asociación de ``.ajustelab`` en HKEY_CURRENT_USER.
+
+En **Linux y BSD**, según los estándares de freedesktop.org, ``ajustelab
+--instalar-escritorio`` instala:
 
 * la entrada del menú de aplicaciones (``ajustelab.desktop``),
 * el icono en el tema *hicolor* (SVG y PNG de 16 a 512 px),
@@ -24,6 +28,7 @@ import sys
 from pathlib import Path
 
 ID = "ajustelab"
+ES_WINDOWS = sys.platform == "win32"
 MIME = "application/x-ajustelab"
 TAMANOS = (16, 24, 32, 48, 64, 128, 256, 512)
 RECURSOS = Path(__file__).resolve().parent / "gui" / "recursos"
@@ -71,10 +76,18 @@ def orden_lanzar() -> list[str]:
 
     No se resuelven enlaces: en un entorno virtual, ``bin/python`` es un enlace al
     Python del sistema y resolverlo perdería las dependencias del entorno."""
+    python = Path(sys.executable).absolute()
+    if ES_WINDOWS:
+        # Scripts\ajustelab.exe es el lanzador sin consola que crea pip; si no está
+        # (instalación con --user), pythonw.exe -m ajustelab tampoco abre consola.
+        lanzador = python.with_name(f"{ID}.exe")
+        if lanzador.is_file():
+            return [str(lanzador)]
+        pythonw = python.with_name("pythonw.exe")
+        return [str(pythonw if pythonw.is_file() else python), "-m", ID]
     lanzador = _lanzador_instalador()
     if lanzador is not None:
         return [str(lanzador)]
-    python = Path(sys.executable).absolute()
     lanzador = python.with_name(ID)
     if lanzador.is_file() and os.access(lanzador, os.X_OK):
         return [str(lanzador)]
@@ -171,10 +184,29 @@ def _refrescar(base: Path) -> list[str]:
     return hechas
 
 
-def instalar(base: Path | None = None, orden: list[str] | None = None, refrescar: bool = True) -> list[Path]:
-    """Instala la entrada del menú, los iconos y el tipo MIME. Devuelve los ficheros escritos."""
-    base = base or datos_usuario()
+def _plataforma(plataforma: str | None) -> str:
+    return plataforma or ("windows" if ES_WINDOWS else "xdg")
+
+
+def ruta_entrada(base: Path | None = None, plataforma: str | None = None) -> Path:
+    """La entrada del menú: ``ajustelab.lnk`` en Windows, ``ajustelab.desktop`` en Linux."""
+    if _plataforma(plataforma) == "windows":
+        from . import windows
+
+        return (base or windows.carpeta_programas()) / f"{ID}.lnk"
+    return ruta_desktop(base)
+
+
+def instalar(base: Path | None = None, orden: list[str] | None = None, refrescar: bool = True,
+             plataforma: str | None = None, clases: str | None = None) -> list[Path]:
+    """Instala la entrada del menú, los iconos y el tipo de fichero. Devuelve los ficheros escritos.
+
+    ``base`` es la carpeta de datos XDG (Linux) o la del menú Inicio (Windows), y
+    ``clases`` la clave del registro para la asociación (Windows; para pruebas)."""
     orden = orden or orden_lanzar()
+    if _plataforma(plataforma) == "windows":
+        return _instalar_windows(base, orden, clases)
+    base = base or datos_usuario()
     if not (RECURSOS / "icono.svg").is_file():
         raise ErrorEscritorio(f"No se encuentran los iconos en {RECURSOS}")
     escritos = [_escribir(ruta_desktop(base), contenido_desktop(orden)),
@@ -190,8 +222,35 @@ def instalar(base: Path | None = None, orden: list[str] | None = None, refrescar
     return escritos
 
 
-def desinstalar(base: Path | None = None, refrescar: bool = True) -> list[Path]:
+def _instalar_windows(carpeta: Path | None, orden: list[str], clases: str | None) -> list[Path]:
+    from . import windows
+
+    icono = RECURSOS / "icono.ico"
+    if not icono.is_file():
+        raise ErrorEscritorio(f"No se encuentra {icono}")
+    lnk = ruta_entrada(carpeta, "windows")
+    try:
+        windows.crear_acceso(lnk, orden[0], subprocess.list2cmdline(orden[1:]), str(icono),
+                             "Ajuste de datos experimentales con base estadística")
+        windows.asociar(orden, str(icono), clases or windows.CLASES)
+    except OSError as e:
+        raise ErrorEscritorio(f"No se pudo crear el acceso directo o la asociación: {e}") from e
+    return [lnk]
+
+
+def desinstalar(base: Path | None = None, refrescar: bool = True, plataforma: str | None = None,
+                clases: str | None = None) -> list[Path]:
     """Quita lo instalado por ``instalar``. Devuelve los ficheros borrados."""
+    if _plataforma(plataforma) == "windows":
+        from . import windows
+
+        lnk = ruta_entrada(base, "windows")
+        borrados = []
+        if lnk.is_file():
+            lnk.unlink()
+            borrados.append(lnk)
+        windows.desasociar(clases or windows.CLASES)
+        return borrados
     base = base or datos_usuario()
     borrados = []
     for ruta in ficheros(base):
@@ -203,8 +262,16 @@ def desinstalar(base: Path | None = None, refrescar: bool = True) -> list[Path]:
     return borrados
 
 
-def lanzador_valido(ruta: Path | None = None) -> bool:
+def lanzador_valido(ruta: Path | None = None, clases: str | None = None) -> bool:
     """¿La entrada del menú apunta a un ejecutable que existe?"""
+    if ES_WINDOWS and (ruta is None or ruta.suffix == ".lnk"):
+        from . import windows
+
+        orden = windows.leer_valor(f"{clases or windows.CLASES}\\{windows.PROGID}\\shell\\open\\command")
+        if not orden:
+            return False
+        primero = orden[1:].split('"', 1)[0] if orden.startswith('"') else orden.split(" ", 1)[0]
+        return Path(primero).is_file()
     ruta = ruta or ruta_desktop()
     try:
         texto = ruta.read_text(encoding="utf-8")
