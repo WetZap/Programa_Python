@@ -106,6 +106,7 @@ jobs:
           test ! -e "$HOME/.local/share/applications/ajustelab.desktop"
           test ! -e "$HOME/.local/share/ajustelab"
 
+  # Los scripts de los pasos van en ASCII: Windows PowerShell 5.1 los lee como CP1252.
   instalador-windows:
     name: instalar.ps1 en Windows (${{ matrix.shell }})
     strategy:
@@ -140,14 +141,14 @@ jobs:
           & "$raiz\bin\ajustelab-cli.exe" --help | Out-Null
           if ($LASTEXITCODE) { exit 1 }
           & "$raiz\bin\ajustelab.cmd" --diagnostico
-          if (-not (Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\ajustelab.lnk")) { throw 'Falta el acceso del menú Inicio' }
+          if (-not (Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\ajustelab.lnk")) { throw 'Falta el acceso del menu Inicio' }
           if (-not (Test-Path "$([Environment]::GetFolderPath('Desktop'))\ajustelab.lnk")) { throw 'Falta el acceso del escritorio' }
-          if ((Get-ItemProperty 'HKCU:\Software\Classes\.ajustelab').'(default)' -ne 'WetZap.ajustelab.sesion') { throw 'Falta la asociación' }
+          if ((Get-ItemProperty 'HKCU:\Software\Classes\.ajustelab').'(default)' -ne 'WetZap.ajustelab.sesion') { throw 'Falta la asociacion' }
           $u = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\ajustelab'
-          "$($u.DisplayName) $($u.DisplayVersion) — $($u.UninstallString)"
+          "$($u.DisplayName) $($u.DisplayVersion): $($u.UninstallString)"
           if (-not (Test-Path "$raiz\desinstalar.ps1")) { throw 'Falta el desinstalador' }
-          if ([Environment]::GetEnvironmentVariable('Path', 'User') -notlike "*$raiz\bin*") { throw 'No está en el PATH' }
-          # El lanzador sin consola (el del menú Inicio) con la salida redirigida
+          if ([Environment]::GetEnvironmentVariable('Path', 'User') -notlike "*$raiz\bin*") { throw 'No esta en el PATH' }
+          # El lanzador sin consola (el del menu Inicio) con la salida redirigida
           Start-Process "$raiz\venv\Scripts\ajustelab.exe" -ArgumentList '--version' -Wait -NoNewWindow -RedirectStandardOutput salida.txt
           Get-Content salida.txt
           if (-not (Select-String -Path salida.txt -Pattern '^ajustelab 1\.' -Quiet)) { throw 'ajustelab.exe --version no escribe nada' }
@@ -168,7 +169,7 @@ jobs:
           powershell -NoProfile -ExecutionPolicy Bypass -File "$($u.InstallLocation)\desinstalar.ps1" -Si
           $raiz = "$env:LOCALAPPDATA\Programs\ajustelab"
           if (Test-Path $raiz) { throw 'Queda la carpeta' }
-          if (Test-Path 'HKCU:\Software\Classes\.ajustelab') { throw 'Queda la asociación' }
+          if (Test-Path 'HKCU:\Software\Classes\.ajustelab') { throw 'Queda la asociacion' }
           if (Test-Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\ajustelab') { throw 'Queda la entrada de Aplicaciones' }
           if (Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\ajustelab.lnk") { throw 'Queda el acceso directo' }
           if ([Environment]::GetEnvironmentVariable('Path', 'User') -like "*$raiz\bin*") { throw 'Sigue en el PATH' }

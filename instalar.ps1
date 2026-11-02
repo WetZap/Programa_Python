@@ -23,7 +23,7 @@
     Con «irm | iex» no se pueden pasar parámetros; usa esta forma:
         & ([scriptblock]::Create((irm https://raw.githubusercontent.com/WetZap/Programa_Python/main/instalar.ps1))) -Si
     o las variables de entorno AJUSTELAB_SI=1, AJUSTELAB_DESINSTALAR=1,
-    AJUSTELAB_DESDE, AJUSTELAB_RAMA y AJUSTELAB_PYTHON.
+    AJUSTELAB_SIN_ESCRITORIO=1, AJUSTELAB_DESDE, AJUSTELAB_RAMA y AJUSTELAB_PYTHON.
 
 .PARAMETER Si
     Responde «sí» a todo (instalar Python con winget, acceso en el escritorio...).
@@ -52,6 +52,7 @@ if ($env:AJUSTELAB_DESINSTALAR -eq '1') { $Desinstalar = $true }
 if ($env:AJUSTELAB_DESDE) { $Desde = $env:AJUSTELAB_DESDE }
 if ($env:AJUSTELAB_RAMA) { $Rama = $env:AJUSTELAB_RAMA }
 if ($env:AJUSTELAB_PYTHON) { $Python = $env:AJUSTELAB_PYTHON }
+if ($env:AJUSTELAB_SIN_ESCRITORIO -eq '1') { $SinAccesoEscritorio = $true }
 
 $AjRaiz = Join-Path $env:LOCALAPPDATA 'Programs\ajustelab'
 $AjVenv = Join-Path $AjRaiz 'venv'
@@ -260,7 +261,7 @@ function AjInstalar {
     $version = (& $pyVenv -c 'import ajustelab; print(ajustelab.__version__)') | Select-Object -Last 1
     AjOk "ajustelab $version"
 
-    AjPaso "Órdenes en $AjBin"
+    AjPaso "Instalando las órdenes en $AjBin"
     New-Item -ItemType Directory -Force -Path $AjBin | Out-Null
     # «ajustelab» como .cmd con el Python de consola: en la terminal muestra la salida
     # de --version, --diagnostico... (el menú Inicio usa el lanzador sin consola).
