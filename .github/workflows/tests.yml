@@ -126,7 +126,9 @@ jobs:
         if: matrix.shell == 'pwsh'
         run: |
           Install-Module PSScriptAnalyzer -Force -Scope CurrentUser
-          $r = Invoke-ScriptAnalyzer -Path instalar.ps1 -Severity Error,Warning -ExcludeRule PSAvoidUsingWriteHost
+          # Write-Host es lo correcto en un instalador; y el fichero va sin BOM a proposito
+          # ("irm | iex" no lo admite; en 5.1 se relee como UTF-8).
+          $r = Invoke-ScriptAnalyzer -Path instalar.ps1 -Severity Error,Warning -ExcludeRule PSAvoidUsingWriteHost,PSUseBOMForUnicodeEncodedFile
           $r | Format-Table -AutoSize | Out-String -Width 220 | Write-Host
           if ($r) { exit 1 }
       - name: Instalar desde esta copia
