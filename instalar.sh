@@ -143,18 +143,40 @@ orden_paquetes() {  # texto de la orden, para mostrarla
     esac
 }
 
-instalar_paquetes() {  # $1 = familia, resto = paquetes (ya confirmado por el usuario)
+_instalar() {  # $1 = gestor, resto = paquetes
     gestor=$1
     shift
     case "$gestor" in
         arch) como_root pacman -S --needed --noconfirm "$@" ;;
-        debian) como_root env DEBIAN_FRONTEND=noninteractive apt-get update -qq &&
-                como_root env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$@" ;;
+        debian) como_root env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$@" ;;
         fedora) como_root dnf install -y "$@" ;;
         suse) como_root zypper --non-interactive install "$@" ;;
-        void) como_root xbps-install -Sy "$@" ;;
+        void) como_root xbps-install -y "$@" ;;
         *) return 1 ;;
     esac
+}
+
+# Instala paquetes (ya confirmado por el usuario). Si la instalación conjunta
+# falla (un nombre que no existe en esta versión de la distribución hace que
+# apt, pacman o zypper rechacen todo), se reintenta uno a uno.
+instalar_paquetes() {  # $1 = familia, resto = paquetes
+    gestor=$1
+    shift
+    case "$gestor" in
+        debian) como_root env DEBIAN_FRONTEND=noninteractive apt-get update -qq || true ;;
+        void) como_root xbps-install -S >/dev/null || true ;;
+    esac
+    _instalar "$gestor" "$@" && return 0
+    [ $# -gt 1 ] || return 1
+    aviso "La instalación conjunta falló; se prueba paquete a paquete."
+    fallidos=""
+    for paquete in "$@"; do
+        _instalar "$gestor" "$paquete" >/dev/null 2>&1 || fallidos="$fallidos $paquete"
+    done
+    if [ -n "$fallidos" ]; then
+        aviso "No se pudieron instalar:$fallidos"
+        return 1
+    fi
 }
 
 # --- Python -------------------------------------------------------------------
@@ -342,17 +364,24 @@ instalar() {
     fi
 
     paso "Comprobación"
+    estado=0
     if QT_QPA_PLATFORM=offscreen "$VENV/bin/ajustelab" --probar-interfaz >/dev/null 2>&1; then
         ok "La interfaz carga correctamente"
     else
+        estado=1
         aviso "La interfaz no arranca. Diagnóstico:"
         "$VENV/bin/ajustelab" --diagnostico | sed 's/^/    /' || true
     fi
-    if [ "$familia" = desconocida ]; then
+    if [ "$familia" = desconocida ] && [ "$estado" = 0 ]; then
         "$VENV/bin/ajustelab" --diagnostico | sed 's/^/    /' || true
     fi
 
-    printf '\n%s¡Listo!%s Abre ajustelab desde el menú de aplicaciones o escribe «ajustelab» en una terminal.\n' "$VERDE" "$NORMAL"
+    if [ "$estado" = 0 ]; then
+        printf '\n%s¡Listo!%s Abre ajustelab desde el menú de aplicaciones o escribe «ajustelab» en una terminal.\n' "$VERDE" "$NORMAL"
+    else
+        printf '\n%sajustelab está instalado, pero la ventana no arranca.%s Instala lo que indica la\n' "$AMARILLO" "$NORMAL"
+        echo "  «Solución» del diagnóstico y vuelve a ejecutar este instalador. ajustelab-cli sí funciona."
+    fi
     echo "  Actualizar:   vuelve a ejecutar este instalador"
     echo "  Problemas:    ajustelab --diagnostico"
     if [ -f "$0" ]; then
@@ -363,6 +392,7 @@ instalar() {
     case "$(basename "${SHELL:-sh}")" in
         zsh) echo "  (En zsh, si la orden no aparece en esta terminal, ejecuta «rehash».)" ;;
     esac
+    return "$estado"
 }
 
 # --- desinstalar ----------------------------------------------------------------

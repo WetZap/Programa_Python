@@ -43,9 +43,9 @@ ORDEN_INSTALAR = {
 # Bibliotecas que el Qt de los paquetes de PyPI (PySide6) toma del sistema.
 # (soname, uso, {familia: paquete})   uso ∈ {"base", "x11", "wayland"}
 BIBLIOTECAS_QT: list[tuple[str, str, dict[str, str]]] = [
-    ("libEGL.so.1", "base", {"debian": "libegl1", "arch": "libglvnd", "fedora": "libglvnd-egl", "suse": "libEGL1",
+    ("libEGL.so.1", "base", {"debian": "libegl1", "arch": "libglvnd", "fedora": "libglvnd-egl", "suse": "libglvnd",
                              "void": "libglvnd", "gentoo": "media-libs/libglvnd"}),
-    ("libGL.so.1", "base", {"debian": "libgl1", "arch": "libglvnd", "fedora": "libglvnd-glx", "suse": "libGL1",
+    ("libGL.so.1", "base", {"debian": "libgl1", "arch": "libglvnd", "fedora": "libglvnd-glx", "suse": "libglvnd",
                             "void": "libglvnd", "gentoo": "media-libs/libglvnd"}),
     ("libfontconfig.so.1", "base", {"debian": "libfontconfig1", "arch": "fontconfig", "fedora": "fontconfig",
                                     "suse": "libfontconfig1", "void": "fontconfig", "gentoo": "media-libs/fontconfig"}),
@@ -55,6 +55,9 @@ BIBLIOTECAS_QT: list[tuple[str, str, dict[str, str]]] = [
                                 "void": "dbus-libs", "gentoo": "sys-apps/dbus"}),
     ("libglib-2.0.so.0", "base", {"debian": "libglib2.0-0", "arch": "glib2", "fedora": "glib2",
                                   "suse": "libglib-2_0-0", "void": "glib", "gentoo": "dev-libs/glib"}),
+    # openSUSE separa gthread de glib; en las demás viene en el mismo paquete
+    ("libgthread-2.0.so.0", "base", {"debian": "libglib2.0-0", "arch": "glib2", "fedora": "glib2",
+                                     "suse": "libgthread-2_0-0", "void": "glib", "gentoo": "dev-libs/glib"}),
     ("libX11.so.6", "base", {"debian": "libx11-6", "arch": "libx11", "fedora": "libX11", "suse": "libX11-6",
                              "void": "libX11", "gentoo": "x11-libs/libX11"}),
     ("libfreetype.so.6", "base", {"debian": "libfreetype6", "arch": "freetype2", "fedora": "freetype",

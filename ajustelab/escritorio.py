@@ -82,7 +82,7 @@ def orden_lanzar() -> list[str]:
 
 
 def citar_exec(arg: str) -> str:
-    """Cita un argumento para la clave Exec (especificación Desktop Entry 1.5)."""
+    """Cita un argumento para la clave Exec (especificación Desktop Entry, reglas de 1.1 en adelante)."""
     arg = arg.replace("%", "%%")
     if not re.search(r"""[\s"'\\><~|&;$*?#()`]""", arg):
         return arg
@@ -94,7 +94,7 @@ def contenido_desktop(orden: list[str]) -> str:
     exec_ = " ".join(citar_exec(a) for a in orden) + " %f"
     return f"""[Desktop Entry]
 Type=Application
-Version=1.5
+Version=1.1
 Name=ajustelab
 GenericName=Ajuste de datos experimentales
 GenericName[en]=Experimental data fitting
