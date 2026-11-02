@@ -181,11 +181,26 @@ def _paquetes_sistema() -> int:
     return 0
 
 
+def _salida_utf8() -> None:
+    """Con la salida redirigida a un fichero o a otro programa, se escribe en UTF-8.
+    En Windows sería cp1252, que no tiene «✓» ni «χ²» (y Python 3.15 ya usa UTF-8
+    por defecto). En una terminal no se toca: Python escribe bien en la consola."""
+    for nombre in ("stdout", "stderr"):
+        flujo = getattr(sys, nombre)
+        try:
+            codificacion = (flujo.encoding or "").lower().replace("-", "").replace("_", "")
+            if not flujo.isatty() and codificacion != "utf8":
+                flujo.reconfigure(encoding="utf-8")
+        except (AttributeError, OSError, ValueError):
+            pass
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv if argv is None else argv)
     propios, qt = separar_argumentos(argv[1:])
     if any(a.startswith("-") for a in propios):
         _consola_windows()
+    _salida_utf8()
     args = _analizador().parse_args(propios)
 
     if args.diagnostico:

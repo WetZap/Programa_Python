@@ -276,6 +276,16 @@ def test_windows_acceso_y_asociacion(tmp_path, windows_aislado):
     assert not lnk.exists() and w.leer_valor(f"{CLAVE_PRUEBAS}\\.ajustelab") is None
 
 
+def test_diagnostico_redirigido():
+    """Redirigida (fichero, tubería), la salida va en UTF-8 aunque el sistema use cp1252."""
+    entorno = {k: v for k, v in os.environ.items() if k not in ("PYTHONIOENCODING", "PYTHONUTF8")}
+    r = subprocess.run([sys.executable, "-m", "ajustelab", "--diagnostico"], capture_output=True, env=entorno,
+                       timeout=120)
+    assert r.returncode in (0, 1), r.stderr.decode("utf-8", "replace")
+    texto = r.stdout.decode("utf-8")
+    assert "diagnóstico" in texto and ("✓" in texto or "✗" in texto)
+
+
 def test_importar_es_ligero():
     """«import ajustelab» no carga SciPy ni SymPy (carga perezosa) y la API sigue igual."""
     codigo = ("import sys, ajustelab; pesados = [m for m in ('scipy', 'sympy', 'pandas') if m in sys.modules]; "

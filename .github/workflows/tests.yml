@@ -141,6 +141,7 @@ jobs:
           & "$raiz\bin\ajustelab-cli.exe" --help | Out-Null
           if ($LASTEXITCODE) { exit 1 }
           & "$raiz\bin\ajustelab.cmd" --diagnostico
+          if ($LASTEXITCODE) { throw 'El diagnostico encuentra problemas' }
           if (-not (Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\ajustelab.lnk")) { throw 'Falta el acceso del menu Inicio' }
           if (-not (Test-Path "$([Environment]::GetFolderPath('Desktop'))\ajustelab.lnk")) { throw 'Falta el acceso del escritorio' }
           if ((Get-ItemProperty 'HKCU:\Software\Classes\.ajustelab').'(default)' -ne 'WetZap.ajustelab.sesion') { throw 'Falta la asociacion' }
