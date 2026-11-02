@@ -105,3 +105,71 @@ jobs:
           test ! -e "$HOME/.local/bin/ajustelab"
           test ! -e "$HOME/.local/share/applications/ajustelab.desktop"
           test ! -e "$HOME/.local/share/ajustelab"
+
+  instalador-windows:
+    name: instalar.ps1 en Windows (${{ matrix.shell }})
+    strategy:
+      fail-fast: false
+      matrix:
+        shell: [powershell, pwsh]  # Windows PowerShell 5.1 (el que trae Windows) y PowerShell 7
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: PSScriptAnalyzer
+        if: matrix.shell == 'pwsh'
+        run: |
+          Install-Module PSScriptAnalyzer -Force -Scope CurrentUser
+          $r = Invoke-ScriptAnalyzer -Path instalar.ps1 -Severity Error,Warning -ExcludeRule PSAvoidUsingWriteHost
+          $r | Format-Table -AutoSize | Out-String -Width 220 | Write-Host
+          if ($r) { exit 1 }
+      - name: Instalar desde esta copia
+        run: |
+          & ${{ matrix.shell }} -NoProfile -ExecutionPolicy Bypass -File .\instalar.ps1 -Si
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Órdenes, acceso directo, asociación, PATH y entrada de Aplicaciones
+        run: |
+          $raiz = "$env:LOCALAPPDATA\Programs\ajustelab"
+          & "$raiz\bin\ajustelab.cmd" --version
+          if ($LASTEXITCODE) { exit 1 }
+          & "$raiz\bin\ajustelab-cli.exe" --help | Out-Null
+          if ($LASTEXITCODE) { exit 1 }
+          & "$raiz\bin\ajustelab.cmd" --diagnostico
+          if (-not (Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\ajustelab.lnk")) { throw 'Falta el acceso del menú Inicio' }
+          if (-not (Test-Path "$([Environment]::GetFolderPath('Desktop'))\ajustelab.lnk")) { throw 'Falta el acceso del escritorio' }
+          if ((Get-ItemProperty 'HKCU:\Software\Classes\.ajustelab').'(default)' -ne 'WetZap.ajustelab.sesion') { throw 'Falta la asociación' }
+          $u = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\ajustelab'
+          "$($u.DisplayName) $($u.DisplayVersion) — $($u.UninstallString)"
+          if (-not (Test-Path "$raiz\desinstalar.ps1")) { throw 'Falta el desinstalador' }
+          if ([Environment]::GetEnvironmentVariable('Path', 'User') -notlike "*$raiz\bin*") { throw 'No está en el PATH' }
+          # El lanzador sin consola (el del menú Inicio) con la salida redirigida
+          Start-Process "$raiz\venv\Scripts\ajustelab.exe" -ArgumentList '--version' -Wait -NoNewWindow -RedirectStandardOutput salida.txt
+          Get-Content salida.txt
+          if (-not (Select-String -Path salida.txt -Pattern '^ajustelab 1\.' -Quiet)) { throw 'ajustelab.exe --version no escribe nada' }
+      - name: Abrir la ventana de verdad (plugin «windows» de Qt)
+        run: |
+          & "$env:LOCALAPPDATA\Programs\ajustelab\venv\Scripts\python.exe" -m ajustelab --probar-interfaz
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Reinstalar con la línea de la documentación (irm | iex, desde este commit)
+        env:
+          AJUSTELAB_SI: "1"
+          AJUSTELAB_DESDE: ${{ github.workspace }}
+        run: |
+          irm "https://raw.githubusercontent.com/WetZap/Programa_Python/${{ github.event.pull_request.head.sha || github.sha }}/instalar.ps1" | iex
+          if ($AjCodigo) { exit $AjCodigo }
+      - name: Desinstalar con el desinstalador de Configuración > Aplicaciones
+        run: |
+          $u = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\ajustelab'
+          powershell -NoProfile -ExecutionPolicy Bypass -File "$($u.InstallLocation)\desinstalar.ps1" -Si
+          $raiz = "$env:LOCALAPPDATA\Programs\ajustelab"
+          if (Test-Path $raiz) { throw 'Queda la carpeta' }
+          if (Test-Path 'HKCU:\Software\Classes\.ajustelab') { throw 'Queda la asociación' }
+          if (Test-Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\ajustelab') { throw 'Queda la entrada de Aplicaciones' }
+          if (Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\ajustelab.lnk") { throw 'Queda el acceso directo' }
+          if ([Environment]::GetEnvironmentVariable('Path', 'User') -like "*$raiz\bin*") { throw 'Sigue en el PATH' }
+          'Desinstalado sin restos'

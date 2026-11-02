@@ -314,6 +314,19 @@ def diagnostico() -> tuple[str, int]:
         fila("PATH", f"{local_bin} {'está' if en_path else 'NO está'} en el PATH")
         donde = shutil.which("ajustelab")
         fila("Comando", donde or "«ajustelab» no se encuentra en el PATH")
+    elif sys.platform == "win32":
+        fila("Sistema", f"Windows {platform.release()} (versión {platform.version()}) · {platform.machine()}")
+        ruta_menu = escritorio.ruta_entrada()
+        if ruta_menu.is_file():
+            ok = escritorio.lanzador_valido(ruta_menu)
+            fila("Menú Inicio", f"instalado ({ruta_menu})" + ("" if ok else " — apunta a un ajustelab que ya no existe"))
+            if not ok:
+                problemas.append("El acceso directo apunta a una instalación que ya no existe.")
+                soluciones.append("ajustelab --instalar-escritorio  (o vuelve a ejecutar instalar.ps1)")
+        else:
+            fila("Menú Inicio", "no instalado (ajustelab --instalar-escritorio)")
+        donde = shutil.which("ajustelab")
+        fila("Comando", donde or "«ajustelab» no está en el PATH (abre una terminal nueva tras instalar)")
     else:
         fila("Sistema", f"{platform.system()} {platform.release()} · {platform.machine()}")
 
