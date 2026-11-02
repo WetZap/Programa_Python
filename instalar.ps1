@@ -69,8 +69,8 @@ if (-not $AjFichero -and $PSCommandPath -and (Test-Path -LiteralPath $PSCommandP
 # saldrían mal: en ese caso se vuelve a leer como UTF-8 y se ejecuta desde memoria.
 if ($AjFichero -and -not $RutaScript -and $PSVersionTable.PSVersion.Major -lt 6) {
     $AjTexto = [IO.File]::ReadAllText($AjFichero, (New-Object System.Text.UTF8Encoding($false)))
-    $AjParametros = @{} + $PSBoundParameters
-    $AjParametros['RutaScript'] = $AjFichero
+    $AjParametros = @{ RutaScript = $AjFichero }
+    foreach ($k in $PSBoundParameters.Keys) { $AjParametros[$k] = $PSBoundParameters[$k] }
     & ([scriptblock]::Create($AjTexto)) @AjParametros
     return
 }
