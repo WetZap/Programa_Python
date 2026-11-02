@@ -1,3 +1,6 @@
+# Auto detect text files and perform LF normalization
+* text=auto
+
 # instalar.sh se ejecuta con sh: siempre con fin de línea LF, también en clones de Windows
 *.sh text eol=lf
 # instalar.ps1 lleva BOM UTF-8 (Windows PowerShell 5.1 lo necesita para leer los acentos)
