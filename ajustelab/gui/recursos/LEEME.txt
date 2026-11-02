@@ -1,6 +1,11 @@
 Recursos de la interfaz.
 
-sorpresa.png (o .jpg, .jpeg, .webp, .gif)
+icono.svg, icono-16.png … icono-512.png
+    Icono de ajustelab: ventana, barra de tareas y menú de aplicaciones
+    («ajustelab --instalar-escritorio» lo copia al tema hicolor). Los PNG se
+    generan a partir del SVG, para no depender de QtSvg al instalar.
+
+sorpresa.jpg (o .png, .jpeg, .webp, .gif)
     Imagen del easter egg: aparece al pulsar el botón «π» del diálogo
     Ayuda → Acerca de ajustelab. Los GIF se reproducen animados.
     Si no existe, se muestra un marcador de posición.

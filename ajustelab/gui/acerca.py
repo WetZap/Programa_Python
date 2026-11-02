@@ -42,17 +42,17 @@ def _marcador(lado: int = 260) -> QPixmap:
     grad.setColorAt(0, QColor("#3987e5"))
     grad.setColorAt(1, QColor("#9085e9"))
     ruta = QPainterPath()
-    ruta.addRoundedRect(QRectF(4, 4, lado - 8, lado - 8), 28, 28)
+    ruta.addRoundedRect(QRectF(4, 4, lado - 8, lado - 8), lado * 0.11, lado * 0.11)
     p.fillPath(ruta, grad)
     p.setPen(QColor("white"))
     f = QFont()
-    f.setPointSize(54)
+    f.setPixelSize(round(lado * 0.28))
     p.setFont(f)
-    p.drawText(QRectF(0, 20, lado, lado * 0.55), Qt.AlignCenter, "★")
-    f.setPointSize(13)
+    p.drawText(QRectF(0, lado * 0.08, lado, lado * 0.55), Qt.AlignCenter, "★")
+    f.setPixelSize(round(lado * 0.067))
     f.setBold(True)
     p.setFont(f)
-    p.drawText(QRectF(10, lado * 0.58, lado - 20, lado * 0.35), Qt.AlignCenter | Qt.TextWordWrap,
+    p.drawText(QRectF(lado * 0.04, lado * 0.58, lado * 0.92, lado * 0.35), Qt.AlignCenter | Qt.TextWordWrap,
                "Aquí irá la sorpresa\n(imagen pendiente)")
     p.end()
     return pm
@@ -77,13 +77,14 @@ def _redondear(pm: QPixmap, radio: float = 18) -> QPixmap:
     return salida
 
 
-def _con_sombra(pm: QPixmap, margen: int, radio: int = 28) -> QImage:
-    """Imagen + sombra difuminada, renderizada una sola vez (sin efectos anidados)."""
+def _con_sombra(pm: QPixmap, margen: int, radio: float = 28, desplazamiento: float = 8) -> QImage:
+    """Imagen + sombra difuminada, renderizada una sola vez (sin efectos anidados).
+    Trabaja en píxeles físicos: quien llama fija después el devicePixelRatio."""
     escena = QGraphicsScene()
     item = QGraphicsPixmapItem(pm)
     sombra = QGraphicsDropShadowEffect()
     sombra.setBlurRadius(radio)
-    sombra.setOffset(0, 8)
+    sombra.setOffset(0, desplazamiento)
     sombra.setColor(QColor(0, 0, 0, 110))
     item.setGraphicsEffect(sombra)
     escena.addItem(item)
@@ -111,6 +112,7 @@ class ImagenFlotante(QWidget):
         self.setToolTip("Arrástrala · clic o Esc para cerrar")
         self.ruta = ruta if ruta is not None else buscar_imagen()
         maximo = QSize(max(160, int(anfitrion.width() * 0.4)), max(160, int(anfitrion.height() * 0.5)))
+        dpr = max(1.0, anfitrion.devicePixelRatioF())  # pantallas HiDPI: se compone a resolución física
 
         self._movie: QMovie | None = None
         self._fondo: QImage | None = None  # imagen + sombra ya compuesta (estáticas)
@@ -124,12 +126,14 @@ class ImagenFlotante(QWidget):
         else:
             pm = QPixmap(str(self.ruta)) if self.ruta is not None else QPixmap()
             if pm.isNull():
-                pm = _marcador()
-            if pm.width() > maximo.width() or pm.height() > maximo.height():
-                pm = pm.scaled(maximo, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            pm = _redondear(pm)
-            tam = pm.size()
-            self._fondo = _con_sombra(pm, self.MARGEN)
+                pm = _marcador(round(260 * dpr))
+            limite = QSize(round(maximo.width() * dpr), round(maximo.height() * dpr))
+            if pm.width() > limite.width() or pm.height() > limite.height():
+                pm = pm.scaled(limite, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            pm = _redondear(pm, 18 * dpr)
+            tam = QSize(round(pm.width() / dpr), round(pm.height() / dpr))
+            self._fondo = _con_sombra(pm, round(self.MARGEN * dpr), 28 * dpr, 8 * dpr)
+            self._fondo.setDevicePixelRatio(dpr)
         self.resize(tam.width() + 2 * self.MARGEN, tam.height() + 2 * self.MARGEN)
 
         # Posición base centrada; la animación la hace flotar alrededor

@@ -71,13 +71,51 @@ o como **biblioteca de Python**.
 Necesitas **Python 3.10 o superior**. Las dependencias (NumPy, SciPy, pandas, SymPy, matplotlib,
 PySide6...) se instalan solas.
 
-### Opción recomendada: pipx
+### Linux: instalador de una línea (recomendado)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/WetZap/Programa_Python/main/instalar.sh | sh
+```
+
+Funciona en Arch, Manjaro, EndeavourOS, CachyOS, Debian, Ubuntu, Mint, Pop!_OS, Fedora, openSUSE,
+Void y sus derivadas. La CI lo prueba en contenedores limpios de Arch, Debian, Ubuntu 22.04, Fedora y
+openSUSE Tumbleweed, abriendo la ventana en X11. Todo queda en tu usuario, sin tocar el Python
+del sistema:
+
+1. Busca Python ≥ 3.10 con `venv`; si no lo hay, ofrece instalarlo.
+2. Crea un entorno propio en `~/.local/share/ajustelab/venv`. Así se evita el error
+   *externally-managed-environment* de Arch, Debian o Fedora.
+3. Deja las órdenes `ajustelab` y `ajustelab-cli` en `~/.local/bin`. Si esa carpeta no está en el
+   PATH (en Arch no lo está por defecto), ofrece añadirla a tu `.bashrc`, `.zshrc` o a fish.
+4. Detecta qué bibliotecas del sistema le faltan a Qt (la típica es `xcb-util-cursor`) y ofrece
+   instalarlas con `pacman`, `apt`, `dnf`, `zypper` o `xbps-install`.
+5. Añade **ajustelab al menú de aplicaciones** con su icono (GNOME, KDE Plasma, XFCE, Cinnamon, MATE,
+   LXQt, COSMIC, o lanzadores como rofi, wofi y fuzzel en Hyprland o Sway). Además, asocia las sesiones
+   `.ajustelab` para abrirlas con doble clic.
+6. Comprueba que la interfaz arranca.
+
+Siempre pregunta antes de instalar paquetes del sistema. Con `-y` responde que sí a todo:
+`curl -fsSL …/instalar.sh | sh -s -- -y`.
+
+| | |
+|---|---|
+| **Actualizar** | Vuelve a ejecutar la misma línea. También repara el entorno si una actualización del sistema cambió la versión de Python (pasa en Arch). |
+| **Desde una copia clonada** | `sh instalar.sh` dentro del repositorio instala esa copia. |
+| **Desinstalar** | `curl -fsSL …/instalar.sh \| sh -s -- --desinstalar` (o `sh instalar.sh --desinstalar`). |
+| **Más opciones** | `sh instalar.sh --ayuda`: `--sin-menu`, `--sin-dependencias`, `--python RUTA`, `--rama RAMA`. |
+
+Si prefieres leer el script antes de ejecutarlo:
+`curl -fsSLO https://raw.githubusercontent.com/WetZap/Programa_Python/main/instalar.sh`, ábrelo y
+luego `sh instalar.sh`.
+
+### Con pipx (cualquier sistema)
 
 [pipx](https://pipx.pypa.io) instala la aplicación aislada y deja los comandos `ajustelab` y
 `ajustelab-cli` disponibles en todo el sistema:
 
 ```bash
 pipx install git+https://github.com/WetZap/Programa_Python
+ajustelab --instalar-escritorio      # Linux: añadirlo al menú de aplicaciones
 ajustelab
 ```
 
@@ -123,24 +161,22 @@ Funciona en Mac con Intel y con Apple Silicon. La interfaz usa el estilo nativo 
 </details>
 
 <details>
-<summary><b>Linux</b></summary>
+<summary><b>Linux, a mano</b></summary>
+
+Es lo mismo que hace el instalador, paso a paso:
 
 ```bash
-# Debian / Ubuntu / Mint
-sudo apt install python3-venv python3-pip git libxcb-cursor0
-# Fedora
-sudo dnf install python3-pip git xcb-util-cursor
-# Arch / Manjaro
-sudo pacman -S python-pip git xcb-util-cursor
-
-python3 -m venv ~/ajustelab-venv
-source ~/ajustelab-venv/bin/activate
-pip install git+https://github.com/WetZap/Programa_Python
-ajustelab
+python3 -m venv ~/.local/share/ajustelab/venv
+~/.local/share/ajustelab/venv/bin/pip install https://github.com/WetZap/Programa_Python/archive/refs/heads/main.tar.gz
+ln -s ~/.local/share/ajustelab/venv/bin/ajustelab ~/.local/bin/
+ajustelab --diagnostico            # dice qué paquetes del sistema faltan y con qué orden instalarlos
+ajustelab --instalar-escritorio    # entrada en el menú, icono y doble clic en .ajustelab
 ```
 
-- `libxcb-cursor0` (o `xcb-util-cursor`) lo exige Qt ≥ 6.5 en X11. Si falta, aparece el error
-  *«Could not load the Qt platform plugin "xcb"»*.
+- En Debian/Ubuntu hace falta antes `sudo apt install python3-venv`.
+- Qt ≥ 6.5 exige `libxcb-cursor0` (Debian/Ubuntu/openSUSE) o `xcb-util-cursor` (Arch/Fedora) en X11.
+  Si falta, aparece el error *«Could not load the Qt platform plugin "xcb"»*. `ajustelab` lo detecta
+  y muestra la orden exacta antes de que Qt falle.
 - En Wayland funciona de forma nativa. Si tu compositor da problemas, prueba
   `QT_QPA_PLATFORM=xcb ajustelab`.
 - Si tu escritorio no informa del modo claro/oscuro (i3, Sway sin portal, algunos XFCE), elige el
@@ -163,9 +199,11 @@ pytest -m "not lento"
 ## Uso de la interfaz
 
 ```bash
-ajustelab                    # abre la ventana
+ajustelab                    # abre la ventana (o búscalo en el menú de aplicaciones)
 ajustelab medidas.csv        # abre la ventana con un fichero (o una sesión .ajustelab)
-python -m ajustelab          # equivalente
+ajustelab --diagnostico      # comprueba Python, Qt, la sesión gráfica y las bibliotecas del sistema
+ajustelab --help             # todas las opciones
+python -m ajustelab          # equivalente a «ajustelab»
 ```
 
 ![Pantalla de bienvenida](docs/capturas/bienvenida_claro.png)
@@ -498,6 +536,9 @@ Programa_Python/
 │   ├── interpolacion.py   # splines, PCHIP, Akima, suavizado, Monte Carlo
 │   ├── interseccion.py    # corte de dos curvas con covarianza
 │   ├── cli.py             # ajustelab-cli
+│   ├── lanzador.py        # orden ajustelab: opciones de sistema y arranque de la interfaz
+│   ├── sistema.py         # diagnóstico: distro, sesión X11/Wayland, bibliotecas de Qt
+│   ├── escritorio.py      # menú de aplicaciones, icono y tipo MIME (freedesktop)
 │   └── gui/               # interfaz PySide6
 │       ├── app.py         #   ventana, menús, paneles acoplables, deshacer, sesiones
 │       ├── tabla.py       #   tabla editable (con deshacer) y asignación de columnas
@@ -506,10 +547,11 @@ Programa_Python/
 │       ├── dialogos.py    #   personalizar y exportar gráfica
 │       ├── sesion.py      #   ficheros .ajustelab
 │       ├── tema.py, estilo.py, iconos.py, widgets.py, ejemplos.py, acerca.py, trabajos.py
-│       └── recursos/      #   imágenes (ver LEEME.txt)
+│       └── recursos/      #   icono de la aplicación y sorpresa (ver LEEME.txt)
 ├── tests/                 # pytest (núcleo, Monte Carlo, interfaz, terminal)
 ├── ejemplos/              # datos sintéticos y demos
 ├── docs/capturas/
+├── instalar.sh            # instalador para Linux
 ├── legacy/ProgramasUtiles.py   # script original, conservado como referencia
 ├── .github/workflows/tests.yml
 └── pyproject.toml
@@ -526,20 +568,39 @@ pytest                     # completo (~3-4 min)
 pytest -m gui              # solo la interfaz (sin pantalla)
 ```
 
-Los tests de la interfaz usan `QT_QPA_PLATFORM=offscreen`, así que no abren ventanas. Las
+Los tests de la interfaz usan `QT_QPA_PLATFORM=offscreen`, así que no abren ventanas. El
+instalador se comprueba con `shellcheck -s sh instalar.sh`, y la CI lo ejecuta en contenedores de
+cinco distribuciones. Las
 contribuciones son bienvenidas mediante *fork* y *pull request*.
 
 ---
 
 ## Solución de problemas
 
+Lo primero, en una terminal:
+
+```bash
+ajustelab --diagnostico
+```
+
+Indica la versión de Python y de Qt, la distribución, si la sesión es X11 o Wayland, qué bibliotecas
+faltan (con la orden para instalarlas), si la entrada del menú está bien y si `~/.local/bin` está en
+el PATH.
+
 | Síntoma | Causa y solución |
 |---|---|
-| `command not found: ajustelab` tras instalar | Se ha instalado una versión antigua sin interfaz. Comprueba con `pip show ajustelab` (debe ser ≥ 1.0.0) y actualiza con `pip install --upgrade git+https://github.com/WetZap/Programa_Python`. Comprueba también que el entorno está activado (`source ~/ajustelab-venv/bin/activate`). En zsh, ejecuta `rehash` si el comando acaba de instalarse. |
+| Al hacer clic en el menú no pasa nada, o sale el aviso *«El entorno de ajustelab ya no funciona»* | Una actualización del sistema cambió la versión de Python (habitual en Arch) y el entorno ya no sirve. Vuelve a ejecutar el instalador: lo detecta y lo rehace. |
+| *Could not load the Qt platform plugin "xcb"* | Faltan bibliotecas de X11. `ajustelab` muestra antes la orden exacta para tu distribución; el instalador las instala si le dices que sí. |
+| `command not found: ajustelab` tras instalar | `~/.local/bin` no está en el PATH: abre una terminal nueva (el instalador ofrece añadirlo) o, en zsh, ejecuta `rehash`. Si la versión es antigua (`ajustelab --version` < 1.1), vuelve a ejecutar el instalador: sustituye las instalaciones anteriores. |
+| `error: externally-managed-environment` al usar `pip install` | Tu distribución protege el Python del sistema (PEP 668). Usa el instalador, pipx o un entorno virtual; no hace falta `--break-system-packages`. |
+| En Wayland, la ventana aparece con un icono genérico en el dock | En Wayland el icono sale de la entrada del menú: ejecuta `ajustelab --instalar-escritorio`. |
 | zsh pregunta `correct 'pip' to '_pip' [nyae]?` | Es la autocorrección de zsh: responde `n`. Para que no vuelva a pasar, usa `python -m pip ...` o añade `unsetopt correct` a `~/.zshrc`. |
-| *Could not load the Qt platform plugin "xcb"* | Falta `libxcb-cursor0` / `xcb-util-cursor` (ver [Linux](#instalación)). |
 | La ventana no sigue el modo oscuro | Tu escritorio no informa del esquema de color: elige el tema en **Ver → Tema**. |
+| NixOS o Alpine | Los paquetes de Qt de PyPI no funcionan ahí: Alpine usa musl, y NixOS no tiene las bibliotecas en rutas estándar. En NixOS usa `python3Packages.pyside6` o activa `programs.nix-ld`. |
 | En Windows, los símbolos χ² o ± salen mal al redirigir la salida de `ajustelab-cli` | Usa `PYTHONIOENCODING=utf-8` o el informe con `-o informe.txt`, que siempre está en UTF-8. |
+
+Para ver todos los avisos de Qt (algunos se ocultan porque solo llenan la terminal), arranca con
+`AJUSTELAB_DEPURAR=1 ajustelab`.
 
 ---
 
