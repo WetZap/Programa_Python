@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     Instalador de ajustelab para Windows 10 y 11.
 
@@ -44,7 +44,8 @@ param(
     [switch]$SinAccesoEscritorio,
     [string]$Python = '',
     [string]$Desde = '',
-    [string]$Rama = 'main'
+    [string]$Rama = 'main',
+    [Parameter(DontShow)][string]$RutaScript = ''
 )
 
 if ($env:AJUSTELAB_SI -eq '1') { $Si = $true }
@@ -53,6 +54,26 @@ if ($env:AJUSTELAB_DESDE) { $Desde = $env:AJUSTELAB_DESDE }
 if ($env:AJUSTELAB_RAMA) { $Rama = $env:AJUSTELAB_RAMA }
 if ($env:AJUSTELAB_PYTHON) { $Python = $env:AJUSTELAB_PYTHON }
 if ($env:AJUSTELAB_SIN_ESCRITORIO -eq '1') { $SinAccesoEscritorio = $true }
+
+# ¿Se ejecuta este fichero (-File, .\instalar.ps1) o el texto descargado con «irm | iex»?
+# En el segundo caso $PSCommandPath puede ser el script desde el que se llamó a iex,
+# así que se comprueba que de verdad es este instalador.
+$AjFichero = $RutaScript
+if (-not $AjFichero -and $PSCommandPath -and (Test-Path -LiteralPath $PSCommandPath) -and
+    (Select-String -LiteralPath $PSCommandPath -Pattern 'function AjPrincipal' -SimpleMatch -Quiet)) {
+    $AjFichero = $PSCommandPath
+}
+
+# Este fichero va en UTF-8 sin BOM porque «irm | iex» no admite el BOM. Windows
+# PowerShell 5.1 lee los .ps1 sin BOM como ANSI y los acentos de los mensajes
+# saldrían mal: en ese caso se vuelve a leer como UTF-8 y se ejecuta desde memoria.
+if ($AjFichero -and -not $RutaScript -and $PSVersionTable.PSVersion.Major -lt 6) {
+    $AjTexto = [IO.File]::ReadAllText($AjFichero, (New-Object System.Text.UTF8Encoding($false)))
+    $AjParametros = @{} + $PSBoundParameters
+    $AjParametros['RutaScript'] = $AjFichero
+    & ([scriptblock]::Create($AjTexto)) @AjParametros
+    return
+}
 
 $AjRaiz = Join-Path $env:LOCALAPPDATA 'Programs\ajustelab'
 $AjVenv = Join-Path $AjRaiz 'venv'
@@ -181,8 +202,8 @@ function AjOrigen {
     param()
     if ($Desde) { return $Desde }
     # Ejecutado como fichero dentro del repositorio: se instala esa copia
-    if ($PSCommandPath) {
-        $dir = Split-Path -Parent $PSCommandPath
+    if ($AjFichero) {
+        $dir = Split-Path -Parent $AjFichero
         $pyproject = Join-Path $dir 'pyproject.toml'
         if ((Test-Path -LiteralPath $pyproject) -and (Select-String -LiteralPath $pyproject -Pattern '^name = "ajustelab"' -Quiet)) {
             return $dir
@@ -430,4 +451,4 @@ function AjPrincipal {
 # fichero, porque con «iex» cerraría la ventana de PowerShell.
 $AjCodigo = 0
 AjPrincipal
-if ($PSCommandPath -and $AjCodigo -ne 0) { exit $AjCodigo }
+if ($AjFichero -and $AjCodigo -ne 0) { exit $AjCodigo }

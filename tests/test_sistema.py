@@ -306,3 +306,20 @@ def test_probar_interfaz():
                        text=True, env=entorno, timeout=300)
     assert r.returncode == 0, r.stderr
     assert "La interfaz funciona" in r.stdout and "offscreen" in r.stdout
+
+
+# --- instaladores -----------------------------------------------------------------
+RAIZ = Path(__file__).resolve().parents[1]
+
+
+def test_instaladores_codificacion():
+    """instalar.ps1 sin BOM («irm | iex» no lo admite) y sin caracteres que, leídos como
+    CP1252 por Windows PowerShell 5.1, se conviertan en comillas o guiones de PowerShell.
+    instalar.sh con fin de línea LF."""
+    ps1 = (RAIZ / "instalar.ps1").read_bytes()
+    assert not ps1.startswith(b"\xef\xbb\xbf")
+    texto = ps1.decode("utf-8")
+    peligrosos = {c for c in set(texto) if ord(c) > 0x7F and any(
+        x in c.encode("utf-8").decode("cp1252", errors="replace") for x in "‘’‚‛“”„–—―")}
+    assert not peligrosos, peligrosos
+    assert b"\r\n" not in (RAIZ / "instalar.sh").read_bytes()

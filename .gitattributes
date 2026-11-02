@@ -3,7 +3,7 @@
 
 # instalar.sh se ejecuta con sh: siempre con fin de línea LF, también en clones de Windows
 *.sh text eol=lf
-# instalar.ps1 lleva BOM UTF-8 (Windows PowerShell 5.1 lo necesita para leer los acentos)
+# instalar.ps1 va en UTF-8 sin BOM (lo exige «irm | iex»); en 5.1 se relee solo como UTF-8
 *.ps1 text eol=crlf
 *.png binary
 *.ico binary
