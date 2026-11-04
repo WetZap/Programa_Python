@@ -8,6 +8,7 @@ en CSV (para rehacerla con pgfplots u otro programa).
 """
 from __future__ import annotations
 
+import atexit
 import io
 from contextlib import contextmanager
 from dataclasses import replace
@@ -166,18 +167,48 @@ def _bytes(fig: Figure, formato: str, dpi: int = 200, transparente: bool = False
     return buf.getvalue()
 
 
+_MARCA_PORTAPAPELES = "application/x-ajustelab-grafica"
+_soltar_registrado = False
+
+
+def _soltar_portapapeles() -> None:
+    """PySide6 (6.12) se cae al cerrar el programa si el portapapeles aún guarda un
+    QMimeData creado desde Python. Antes de salir, si lo que hay es nuestra
+    gráfica, se cambia por la misma imagen creada por Qt: sigue en el portapapeles
+    después de cerrar (solo se pierde la versión SVG)."""
+    if QGuiApplication.instance() is None:
+        return
+    try:
+        portapapeles = QGuiApplication.clipboard()
+        actual = portapapeles.mimeData()
+        if actual is not None and actual.hasFormat(_MARCA_PORTAPAPELES):
+            imagen = portapapeles.image()
+            if imagen.isNull():
+                portapapeles.clear()
+            else:
+                portapapeles.setImage(imagen)
+    except RuntimeError:  # objetos de Qt ya destruidos
+        pass
+
+
 def copiar_figura(fig: Figure, dpi: int = 200, transparente: bool = False) -> None:
     """Al portapapeles como imagen (PNG) y como SVG: los programas que entienden
     SVG (Inkscape, LibreOffice…) pegan la versión vectorial."""
+    global _soltar_registrado
     png = _bytes(fig, "png", dpi, transparente)
     mime = QMimeData()
     mime.setImageData(QImage.fromData(png, "PNG"))
     mime.setData("image/png", QByteArray(png))
+    mime.setData(_MARCA_PORTAPAPELES, QByteArray(b"1"))
     try:
         mime.setData("image/svg+xml", QByteArray(_bytes(fig, "svg", dpi, transparente)))
     except Exception:  # noqa: BLE001 — el SVG es un extra: si falla, queda la imagen
         pass
     QGuiApplication.clipboard().setMimeData(mime)
+    if not _soltar_registrado:  # al cerrar la ventana (aboutToQuit) o, si no, al salir de Python
+        _soltar_registrado = True
+        QGuiApplication.instance().aboutToQuit.connect(_soltar_portapapeles)
+        atexit.register(_soltar_portapapeles)
 
 
 # --- datos de la gráfica ---------------------------------------------------------

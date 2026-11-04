@@ -619,3 +619,30 @@ def test_exportar_de_principio_a_fin(app, ventana, tmp_path, monkeypatch):
     ventana.copiar_grafica()
     mime = QGuiApplication.clipboard().mimeData()
     assert mime.hasImage() and mime.hasFormat("image/svg+xml") and b"<svg" in bytes(mime.data("image/svg+xml"))
+
+
+@pytest.mark.parametrize("cierre", ["aboutToQuit", "fin_de_python"])
+def test_copiar_grafica_y_salir_sin_error(cierre):
+    """PySide6 se caía al salir si el portapapeles guardaba nuestro QMimeData (PNG + SVG)."""
+    import subprocess
+    import sys
+
+    codigo = f"""
+from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import QApplication
+from ajustelab.gui.dialogos import copiar_figura, renderizar
+from ajustelab.gui.grafica import COLORES_PUBLICACION, Escena, OpcionesGrafica, SerieDibujo
+import numpy as np
+app = QApplication([])
+s = SerieDibujo("y", np.arange(5.0), np.arange(5.0) ** 2)
+copiar_figura(renderizar(Escena(series=[s], nombre_x="x"), OpcionesGrafica(), COLORES_PUBLICACION, False, 8, 6))
+assert app.clipboard().mimeData().hasFormat("image/svg+xml")
+if {cierre!r} == "aboutToQuit":
+    QTimer.singleShot(50, app.quit)
+    app.exec()
+    assert not app.clipboard().image().isNull()  # la imagen sigue en el portapapeles
+print("ok")
+"""
+    entorno = {**os.environ, "QT_QPA_PLATFORM": "offscreen"}
+    r = subprocess.run([sys.executable, "-c", codigo], capture_output=True, text=True, env=entorno, timeout=120)
+    assert r.returncode == 0 and "ok" in r.stdout, r.stderr[-2000:]
