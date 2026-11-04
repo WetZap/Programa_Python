@@ -206,11 +206,24 @@ def _flecha_abajo(p):
     p.drawLine(QPointF(5, 20), QPointF(19, 20))
 
 
+def _representar(p):
+    # dos ejes y (izquierdo y derecho) con puntos
+    p.drawPath(_ruta((4, 3), (4, 20), (20, 20), (20, 3)))
+    for x, y in ((8, 15), (11, 11), (14, 12), (17, 7)):
+        p.drawEllipse(QPointF(x, y), 1.3, 1.3)
+
+
+def _anadir(p):
+    p.drawLine(QPointF(12, 5), QPointF(12, 19))
+    p.drawLine(QPointF(5, 12), QPointF(19, 12))
+
+
 _DIBUJOS: dict[str, _Dibujo] = {
     "abrir": _abrir, "guardar": _guardar, "nuevo": _nuevo, "deshacer": _deshacer, "rehacer": _rehacer,
     "pegar": _pegar, "copiar": _copiar, "exportar": _exportar, "ajustar": _ajustar, "region": _region,
     "rango": _rango, "personalizar": _personalizar, "seleccion": _seleccion, "ejemplo": _ejemplo,
     "info": _info, "quitar": _quitar, "estimar": _estimar, "usar": _flecha_abajo,
+    "representar": _representar, "anadir": _anadir,
 }
 
 # Equivalencias con los iconos de tema de Qt ≥ 6.7 (nombre del enum) y freedesktop

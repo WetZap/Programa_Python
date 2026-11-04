@@ -58,6 +58,8 @@ o como **biblioteca de Python**.
 - **Intersección de dos curvas** cualesquiera con su matriz de covarianza y elipse de confianza.
 - **Resultados listos para el informe**: redondeo con la regla del PDG, tabla de parámetros en LaTeX,
   gráficas PNG/PDF/SVG a 300 ppp, tramos de spline en LaTeX/CSV.
+- **Representar sin ajustar**: varias columnas frente a una misma x, con eje y izquierdo y derecho (o
+  paneles apilados), con o sin barras de error.
 - **Interfaz cómoda**: vista previa del modelo, parámetros fijos y con límites, exclusión de puntos
   con un clic o por región, rango de ajuste arrastrando, deshacer/rehacer, comparación de modelos
   superpuestos, sesiones `.ajustelab`, exportación para publicación y coma decimal opcional.
@@ -240,17 +242,41 @@ python -m ajustelab          # equivalente a «ajustelab»
 
 1. **Carga los datos.** Usa *Abrir* (Ctrl+O), arrastra el fichero a la ventana, pega una tabla copiada de
    LibreOffice o Excel (Ctrl+Mayús+V) o escribe en una tabla vacía. Si es la primera vez, *Datos de
-   ejemplo* carga cinco conjuntos sintéticos, uno por cada tipo de análisis.
+   ejemplo* carga seis conjuntos sintéticos, uno por cada tipo de análisis.
 2. **Comprueba las columnas** x, y, σx y σy. Se asignan solas (ver [convenio](#asignación-de-columnas)).
    σ puede ser una columna, ninguna o un valor *constante* (p. ej. la resolución del instrumento).
 3. **Elige una pestaña** y pulsa **Ctrl+Intro**:
 
 | Pestaña | Qué hace |
 |---|---|
+| **Representar** | Dibuja las columnas que elijas frente a una x, **sin ajustar nada**: cada serie con su incertidumbre (o sin ella), su eje y (izquierdo o derecho), su estilo (puntos, línea o ambos) y su color. Ver [Representar datos](#representar-datos-sin-ajustar). |
 | **Ajuste** | Ajusta un modelo del catálogo o una expresión propia. Tiene una tabla de parámetros con valor inicial, casilla *Fijo* y límites mín/máx, y una vista previa con los valores iniciales. Debajo están *Resumen* (veredicto, χ²/ν, p-valor, R²), *Informe* (texto y LaTeX) y *Evaluar* (f(x) ± σ, y la x que da un y₀ ± σ). |
 | **Selección de modelo** | Prueba los 20 modelos automáticos (más los que añadas) y los ordena por AICc o BIC: ★ recomendado, ✓ compatible, ✗ incompatible. La columna *Ver* superpone hasta tres modelos en la gráfica para compararlos. Con doble clic, el modelo pasa a *Ajuste*. |
 | **Interpolación** | Construye el interpolante y calcula f(x), f′(x), la x tal que f(x) = y₀ e integrales, con error por Monte Carlo. Exporta los tramos. |
 | **Intersección** | Divide la tabla en dos conjuntos (los *n* primeros puntos y el resto), ajusta cada uno y calcula el punto de corte con su elipse de confianza. |
+
+### Representar datos sin ajustar
+
+![Tensión e intensidad frente al tiempo, con un eje y a cada lado](docs/capturas/representar_claro.png)
+
+Al abrir un fichero, la pestaña **Representar** propone sola qué dibujar. La primera columna (o la
+x del panel *Datos*) va al eje x, y cada columna que no sea una incertidumbre es una serie. Las
+incertidumbres se emparejan por el nombre: `dV`, `V_err` o `σV` con `V (V)`. Con dos series de
+escalas muy distintas, la segunda pasa al eje derecho. Todo se cambia en la tabla de series:
+
+- **Incertidumbre**: la columna de σ de cada serie (y de x). *Barras de error* las enseña u oculta todas a la vez.
+- **Eje y**: izquierdo o derecho. Cada eje se colorea como su serie, y la leyenda indica a qué eje
+  pertenece cada una.
+- **Estilo**: puntos, línea o puntos y línea. **Color**: clic para elegirlo, clic derecho para volver al
+  automático. El color sigue a la serie: quitar una no cambia el de las demás.
+- **Con eje derecho → Paneles apilados**: en vez de dos escalas en el mismo panel, dos paneles con la
+  misma x.
+
+> Con dos ejes y en el mismo panel, dónde se cruzan las curvas depende de cómo se escale cada eje, y
+> puede sugerir una relación que no existe. Para comparar formas, los paneles apilados son más honestos.
+
+Clic en un punto excluye su fila (afecta también a los ajustes). La escala logarítmica del eje
+derecho está en *log y dcho.* y su etiqueta, en *Personalizar*.
 
 ### Trabajar sobre la gráfica
 
@@ -283,11 +309,32 @@ se marcan en rojo.
 
 | Acción | Resultado |
 |---|---|
-| *Exportar gráfica* (Ctrl+E) | PNG/PDF/SVG con tamaño en cm (presets de 1 o 2 columnas), resolución en ppp, estilo *publicación* (fondo blanco aunque uses el tema oscuro) o *pantalla*, y fondo transparente opcional. |
-| *Copiar gráfica* (Ctrl+Mayús+C) | La gráfica como imagen en el portapapeles, lista para pegar en Word, LibreOffice o Slides. |
+| *Exportar gráfica* (Ctrl+E) | Diálogo con vista previa al tamaño real (ver abajo). |
+| *Copiar gráfica* (Ctrl+Mayús+C) | Con los últimos ajustes de exportación, como imagen y como SVG: Word pega la imagen; Inkscape y LibreOffice, la versión vectorial. |
 | *Copiar LaTeX* (pestaña *Informe*) | Tabla `tabular` con los parámetros redondeados. |
 | *Guardar sesión* (Ctrl+S) | Fichero `.ajustelab` (JSON) con la tabla, las columnas, los puntos excluidos, el rango, el modelo con sus parámetros fijos y límites, las opciones de la gráfica y la pestaña activa. Al abrirlo se recupera todo y se rehace el ajuste. |
 | *Guardar informe* / *Exportar tabla* | Texto de la pestaña activa / datos en csv, xlsx… |
+
+#### Exportar la gráfica
+
+![Diálogo de exportación con vista previa](docs/capturas/exportar_claro.png)
+
+- **Vista previa** de cómo saldrá, a escala, con el tamaño final en cm y en píxeles.
+- **Formatos**: PNG y TIFF (imagen; TIFF sin pérdidas, para imprenta), PDF, SVG y EPS (vectoriales). EPS
+  no admite transparencias: las bandas de confianza saldrían opacas, y el diálogo lo avisa.
+- **Tamaño exacto en cm**: anchos de revista (8,6 y 17,8 cm, los de APS), informe, diapositiva y póster,
+  con proporción fija (4:3, 3:2, áurea, 16:9, 1:1) o libre. El fichero mide exactamente eso: el
+  contenido se encaja dentro, no se recorta después.
+- **Tipografía y tamaño de letra** propios de la exportación: *Sans* o *Serif* (STIX, tipo Times, con
+  fórmulas a juego, como LaTeX con `newtx`). El tamaño es el real en el papel; las revistas suelen pedir 7–9 pt.
+- **Texto editable**: en PDF y EPS las fuentes van incrustadas como TrueType (lo que piden las
+  revistas); en SVG el texto sigue siendo texto, editable en Inkscape. Sin marcar, en SVG se convierte en trazos.
+- **Estilo** *publicación* (fondo blanco aunque uses el tema oscuro) o *como en pantalla*, y fondo
+  transparente.
+- **Datos de la gráfica en CSV**: puntos, curva ajustada y bandas en ficheros junto a la figura
+  (`figura_datos.csv`, `figura_ajuste.csv`…), para rehacerla con pgfplots o donde quieras.
+
+Los ajustes se recuerdan entre sesiones.
 
 *Abrir reciente* recuerda los 8 últimos ficheros. Al cerrar o abrir otro fichero con cambios sin guardar,
 el programa pregunta antes de descartarlos.
@@ -311,7 +358,7 @@ el programa pregunta antes de descartarlos.
 | Ctrl+Mayús+V | Pegar el portapapeles como tabla nueva |
 | Ctrl+Z / Ctrl+Mayús+Z (o Ctrl+Y) | Deshacer / rehacer |
 | Ctrl+Intro | Ejecutar la pestaña activa |
-| Ctrl+1 … Ctrl+4 | Ir a Ajuste, Selección, Interpolación, Intersección |
+| Ctrl+1 … Ctrl+5 | Ir a Representar, Ajuste, Selección, Interpolación, Intersección |
 | Ctrl+E / Ctrl+Mayús+C | Exportar gráfica / copiarla al portapapeles |
 | Ctrl+C / Ctrl+V (en la tabla) | Copiar la selección / pegar un bloque desde la celda actual |
 | Supr (en la tabla) | Vaciar las celdas seleccionadas |
@@ -573,7 +620,8 @@ Programa_Python/
 │       ├── tabla.py       #   tabla editable (con deshacer) y asignación de columnas
 │       ├── grafica.py     #   gráfica, región/rango, cuadro de resultados
 │       ├── paneles.py     #   pestañas de análisis
-│       ├── dialogos.py    #   personalizar y exportar gráfica
+│       ├── representar.py #   pestaña Representar (series, dos ejes y)
+│       ├── dialogos.py    #   personalizar y exportar gráfica (vista previa, formatos, CSV)
 │       ├── sesion.py      #   ficheros .ajustelab
 │       ├── tema.py, estilo.py, iconos.py, widgets.py, ejemplos.py, acerca.py, trabajos.py
 │       └── recursos/      #   icono de la aplicación y sorpresa (ver LEEME.txt)

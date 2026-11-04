@@ -69,6 +69,7 @@ def arrastrar(lienzo, desde, hasta):
 
 def abrir_y_ajustar(app, w, clave="exponencial_fondo"):
     w.abrir(EJEMPLO)
+    w.pestanas.setCurrentWidget(w.p_ajuste)  # la pestaña por defecto es «Representar»
     esperar(app, w)
     w.p_ajuste.selector.seleccionar_clave(clave)
     w.p_ajuste.ajustar()
@@ -399,3 +400,222 @@ def test_sorpresa(app, ventana, tmp_path, monkeypatch, formato):
     f.cerrar()
     esperar(app, ventana, 40)
     assert not [c for c in ventana.children() if isinstance(c, acerca.ImagenFlotante)]
+
+
+# --- pestaña «Representar» --------------------------------------------------------
+def _contenedores_error(fig):
+    from matplotlib.container import ErrorbarContainer
+
+    return [c for ax in fig.axes for c in ax.containers if isinstance(c, ErrorbarContainer)]
+
+
+def test_representar_dos_ejes_apilados_y_barras(app, ventana):
+    from ajustelab.gui.grafica import PALETA_SERIES
+
+    ventana.abrir_ejemplo("carga")
+    esperar(app, ventana)
+    p = ventana.p_repr
+    assert ventana.pestanas.currentWidget() is p
+    cfg = p._series_config()
+    assert [(s["y"], s["dy"], s["eje"]) for s in cfg] == [("V (V)", "dV", "izq"), ("I (mA)", "dI", "der")]
+    fig = ventana.grafica.figura
+    izq, der = fig.axes
+    assert izq.get_ylabel() == "V (V)" and der.get_ylabel() == "I (mA)" and izq.get_xlabel() == "t (s)"
+    claro = PALETA_SERIES[ventana.tema.oscuro]
+    from matplotlib.colors import to_hex
+
+    assert to_hex(izq.spines["left"].get_edgecolor()) == claro[0]  # cada eje, del color de su serie
+    assert to_hex(der.spines["right"].get_edgecolor()) == claro[1]
+    assert len(fig.legends) == 1 and "(eje dcho.)" in fig.legends[0].get_texts()[1].get_text()
+    assert len(_contenedores_error(fig)) == 2
+    # Sin barras de error
+    p.barras.setChecked(False)
+    esperar(app, ventana, 5)
+    assert not _contenedores_error(ventana.grafica.figura)
+    p.barras.setChecked(True)
+    # Paneles apilados: misma x, uno encima de otro
+    p.disposicion.setCurrentIndex(1)
+    esperar(app, ventana, 5)
+    arriba, abajo = ventana.grafica.figura.axes
+    assert arriba.get_position().y0 > abajo.get_position().y1 and abajo.get_xlabel() == "t (s)"
+    assert arriba.get_shared_x_axes().joined(arriba, abajo)
+    # Región, Rango y Residuos no aplican sin ajuste
+    assert not ventana.grafica.b_region.isEnabled() and not ventana.grafica.ver_residuos.isEnabled()
+    ventana.pestanas.setCurrentWidget(ventana.p_ajuste)
+    esperar(app, ventana, 5)
+    assert ventana.grafica.b_region.isEnabled()
+
+
+def test_representar_series_colores_y_columnas(app, ventana, monkeypatch):
+    from PySide6.QtGui import QColor as QC
+    from PySide6.QtWidgets import QColorDialog
+
+    ventana.abrir_ejemplo("carga")
+    esperar(app, ventana)
+    p = ventana.p_repr
+    # Quitar la primera serie no cambia el color de la otra (el color sigue a la serie)
+    p.tabla.setCurrentCell(0, 0)
+    p.quitar_serie()
+    esperar(app, ventana, 5)
+    assert [s["y"] for s in p._series_config()] == ["I (mA)"] and p._series_config()[0]["indice"] == 1
+    # Una sola serie en el eje derecho: se dibuja con un solo eje
+    assert len(ventana.grafica.figura.axes) == 1
+    # Quitarlas todas deja la gráfica vacía (no vuelven solas); «Automático» las recupera
+    p.quitar_serie()
+    esperar(app, ventana, 5)
+    assert p.tabla.rowCount() == 0 and not ventana.grafica.figura.axes
+    p.configurar(automatico=True)
+    esperar(app, ventana, 5)
+    assert p.tabla.rowCount() == 2
+    # Añadir una serie y elegir su color
+    p.anadir_serie()
+    assert p.tabla.rowCount() == 3 and p._series_config()[2]["indice"] == 2
+    monkeypatch.setattr(QColorDialog, "getColor", lambda *a, **k: QC("#123456"))
+    p._elegir_color(p.tabla.cellWidget(2, 5))
+    assert p._series_config()[2]["color"] == "#123456"
+    # Una columna nueva en la tabla aparece en las listas
+    m = ventana.panel_datos.modelo
+    m.renombrar(4, "δI")
+    esperar(app, ventana, 5)
+    assert "δI" in [p.tabla.cellWidget(0, 2).itemText(i) for i in range(p.tabla.cellWidget(0, 2).count())]
+
+
+def test_representar_clic_excluye_fila(app, ventana):
+    from matplotlib.backend_bases import MouseEvent
+
+    ventana.abrir_ejemplo("carga")
+    esperar(app, ventana)
+    g = ventana.grafica
+    g.lienzo.draw()
+    assert g._puntos_px is not None and g._puntos_serie is not None
+    # Un punto de la serie del eje derecho (I): fila 3
+    k = int(np.flatnonzero((g._puntos_serie[:, 0] == 1) & (g._puntos_serie[:, 1] == 3))[0])
+    MouseEvent("motion_notify_event", g.lienzo, *g._puntos_px[k])._process()
+    assert g._anotacion is not None and "I (mA)" in g._anotacion.get_text()
+    MouseEvent("button_press_event", g.lienzo, *g._puntos_px[k], button=1)._process()
+    esperar(app, ventana)
+    assert ventana.panel_datos.modelo.excluidas == {3}
+    serie = ventana.grafica.escena.series[1]
+    assert not serie.incluidos[3] and serie.incluidos.sum() == serie.x.size - 1
+
+
+def test_representar_en_sesion(app, ventana, tmp_path, monkeypatch):
+    ventana.abrir_ejemplo("carga")
+    esperar(app, ventana)
+    p = ventana.p_repr
+    p.disposicion.setCurrentIndex(1)
+    p.tabla.cellWidget(1, 4).setCurrentIndex(p.tabla.cellWidget(1, 4).findData("puntos_linea"))
+    ruta = tmp_path / "carga.ajustelab"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: (str(ruta), ""))
+    assert ventana.guardar_sesion()
+    ventana.nueva_sesion()
+    assert ventana.abrir(ruta)
+    esperar(app, ventana)
+    assert ventana.pestanas.currentWidget() is ventana.p_repr
+    assert p.disposicion.currentData() is True and p._series_config()[1]["estilo"] == "puntos_linea"
+    assert len(ventana.grafica.figura.axes) == 2
+
+
+def test_sesion_antigua_abre_su_pestana(app, ventana):
+    """Las sesiones de antes de «Representar» guardaban el índice de la pestaña."""
+    from ajustelab.gui import sesion
+
+    ventana.abrir(EJEMPLO)
+    esperar(app, ventana)
+    d = sesion.a_dict(ventana)
+    d.pop("pestana_panel")
+    d["pestana"] = 0  # entonces, «Ajuste»
+    sesion.restaurar(ventana, d)
+    assert ventana.pestanas.currentWidget() is ventana.p_ajuste
+
+
+# --- exportación ------------------------------------------------------------------
+def test_exportar_formatos_tamano_y_texto(app, ventana, tmp_path):
+    import re
+
+    from PIL import Image
+
+    from ajustelab.gui.dialogos import guardar_figura, renderizar
+    from ajustelab.gui.grafica import COLORES_PUBLICACION
+
+    abrir_y_ajustar(app, ventana)
+    e, o = ventana.grafica.escena, ventana.grafica.opciones
+    for fuente in ("sans", "serif"):
+        for editable in (True, False):
+            fig = renderizar(e, o, COLORES_PUBLICACION, False, 8.6, 6.4, fuente=fuente, tam_fuente=8,
+                             editable=editable)
+            for ext in ("png", "pdf", "svg", "eps", "tif"):
+                ruta = tmp_path / f"g_{fuente}_{editable}.{ext}"
+                guardar_figura(fig, ruta, dpi=300)
+                assert ruta.stat().st_size > 2000, ruta
+            svg = (tmp_path / f"g_{fuente}_{editable}.svg").read_text(encoding="utf-8")
+            assert ("<text" in svg) == editable  # texto editable o convertido en trazos
+    # Tamaño exacto: 8,6 × 6,4 cm
+    px = (int(8.6 / 2.54 * 300), int(6.4 / 2.54 * 300))
+    assert Image.open(tmp_path / "g_sans_True.png").size == px
+    tif = Image.open(tmp_path / "g_sans_True.tif")
+    assert tif.size == px and tif.info.get("compression") == "tiff_lzw"
+    caja = re.search(rb"/MediaBox \[ *0 0 ([\d.]+) ([\d.]+)", (tmp_path / "g_sans_True.pdf").read_bytes())
+    assert abs(float(caja[1]) - 8.6 / 2.54 * 72) < 0.5 and abs(float(caja[2]) - 6.4 / 2.54 * 72) < 0.5
+    assert b"/FontFile2" in (tmp_path / "g_sans_True.pdf").read_bytes()  # TrueType incrustada (tipo 42)
+    assert b"STIX" in (tmp_path / "g_serif_True.pdf").read_bytes()
+
+
+def test_exportar_datos_csv(app, ventana, tmp_path):
+    from ajustelab.gui.dialogos import guardar_tablas, tablas_escena
+
+    abrir_y_ajustar(app, ventana)
+    t = tablas_escena(ventana.grafica.escena)
+    assert set(t) == {"datos", "ajuste"}
+    assert {"f", "banda_inferior", "banda_superior"} <= set(t["ajuste"].columns) and len(t["datos"]) == 16
+    rutas = guardar_tablas(ventana.grafica.escena, tmp_path / "figura.pdf")
+    assert sorted(r.name for r in rutas) == ["figura_ajuste.csv", "figura_datos.csv"]
+    ventana.abrir_ejemplo("carga")
+    esperar(app, ventana)
+    t = tablas_escena(ventana.grafica.escena)
+    assert list(t["datos"].columns) == ["fila", "t (s)", "V (V)", "σ V (V)", "I (mA)", "σ I (mA)"]
+    assert t["datos"]["fila"].iloc[0] == 1 and len(t["datos"]) == 26
+
+
+def test_dialogo_exportar(app, ventana):
+    from ajustelab.gui.dialogos import DialogoExportar
+
+    abrir_y_ajustar(app, ventana)
+    dlg = DialogoExportar(ventana, {"formato": "pdf", "fuente": "serif"}, ventana.grafica.escena,
+                          ventana.grafica.opciones, ventana.tema)
+    dlg.show()
+    assert dlg.formato.currentData() == "pdf" and not dlg.dpi.isEnabled() and dlg.editable.isEnabled()
+    dlg.preset.setCurrentText("Doble columna (17,8 cm)")
+    assert dlg.ancho.value() == 17.8 and abs(dlg.alto.value() - 13.4) < 0.11 and not dlg.alto.isEnabled()
+    dlg.proporcion.setCurrentText("Libre")
+    assert dlg.alto.isEnabled()
+    dlg.formato.setCurrentIndex(dlg.formato.findData("eps"))
+    assert not dlg.transparente.isEnabled() and "transparencias" in dlg.aviso.text()
+    dlg.formato.setCurrentIndex(dlg.formato.findData("png"))
+    assert dlg.dpi.isEnabled() and "px" in dlg.info.text()
+    for _ in range(40):
+        app.processEvents()
+        time.sleep(0.01)
+    assert dlg.vista.pixmap() is not None and not dlg.vista.pixmap().isNull()
+    dlg.close()
+
+
+def test_exportar_de_principio_a_fin(app, ventana, tmp_path, monkeypatch):
+    from ajustelab.gui import dialogos
+
+    abrir_y_ajustar(app, ventana)
+    monkeypatch.setattr(dialogos.DialogoExportar, "exec", lambda self: QtWidgets.QDialog.Accepted)
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: (str(tmp_path / "practica"), ""))
+    ventana._ultima_exportacion = {"formato": "svg", "ancho": 12.0, "proporcion": "Libre", "alto": 8.0,
+                                   "datos": True}
+    ventana.exportar_grafica()
+    assert (tmp_path / "practica.svg").is_file()  # se añade la extensión del formato
+    assert (tmp_path / "practica_datos.csv").is_file() and (tmp_path / "practica_ajuste.csv").is_file()
+    import json
+
+    assert json.loads(ventana.ajustes.value("exportacion"))["formato"] == "svg"  # se recuerda
+    # Copiar: imagen y SVG a la vez
+    QGuiApplication.clipboard().clear()
+    ventana.copiar_grafica()
+    mime = QGuiApplication.clipboard().mimeData()
+    assert mime.hasImage() and mime.hasFormat("image/svg+xml") and b"<svg" in bytes(mime.data("image/svg+xml"))

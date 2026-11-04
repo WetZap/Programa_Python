@@ -14,7 +14,7 @@ from __future__ import annotations
 import importlib
 from typing import TYPE_CHECKING
 
-__version__ = "1.3.0"
+__version__ = "1.4.0"
 
 # Carga perezosa (PEP 562): «import ajustelab» no arrastra SciPy ni SymPy hasta
 # que se usa algo, así que «ajustelab --version» o «--diagnostico» responden al
