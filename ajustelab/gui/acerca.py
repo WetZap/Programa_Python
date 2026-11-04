@@ -117,11 +117,11 @@ class ImagenFlotante(QWidget):
         self._movie: QMovie | None = None
         self._fondo: QImage | None = None  # imagen + sombra ya compuesta (estáticas)
         if self.ruta is not None and self.ruta.suffix.lower() == ".gif":
-            self._movie = QMovie(str(self.ruta))
+            self._movie = QMovie(str(self.ruta), parent=self)  # se destruye con la imagen
             self._movie.jumpToFrame(0)
             tam = self._movie.currentPixmap().size().scaled(maximo, Qt.KeepAspectRatio)
             self._movie.setScaledSize(tam)
-            self._movie.frameChanged.connect(lambda _: self.update())
+            self._movie.frameChanged.connect(self.update)
             self._movie.start()
         else:
             pm = QPixmap(str(self.ruta)) if self.ruta is not None else QPixmap()
@@ -185,6 +185,8 @@ class ImagenFlotante(QWidget):
 
     def cerrar(self) -> None:
         self._flotar.stop()
+        if self._movie is not None:
+            self._movie.stop()
         self._fundido.stop()
         self._fundido.setDuration(250)
         self._fundido.setStartValue(self._alfa)

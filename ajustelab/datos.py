@@ -475,14 +475,38 @@ _RE_ERR_PREFIJO = re.compile(r"^(?:d|s|e|u|δ|Δ|σ|err_?|error_?|sigma_?|inc_?)
 _RE_ERR_SUFIJO = re.compile(r"^(.+?)[ _]?(?:err|error|sigma|unc|inc)$", re.IGNORECASE)
 
 
+_RE_UNIDADES = re.compile(r"\s*[\(\[][^\)\]]*[\)\]]\s*$")
+
+
+def _sin_unidades(nombre: str) -> str:
+    """«V (V)» → «V»; «I [mA]» → «I»."""
+    return _RE_UNIDADES.sub("", nombre.strip()) or nombre.strip()
+
+
 def _emparejar_errores(columnas: list[str]) -> dict[str, str]:
-    """{columna_error: columna_valor} si el nombre de la columna de error referencia a otra."""
+    """{columna_error: columna_valor} si el nombre de la columna de error referencia a otra.
+
+    Se comparan también los nombres sin unidades: «dV» o «dV (V)» es el error de «V (V)»."""
     pares = {}
+    base = {}
     for c in columnas:
-        for patron in (_RE_ERR_PREFIJO, _RE_ERR_SUFIJO):
-            m = patron.match(c.strip())
-            if m and m.group(1) in columnas and m.group(1) != c:
-                pares[c] = m.group(1)
+        base.setdefault(_sin_unidades(c), c)
+    for c in columnas:
+        for nombre in dict.fromkeys((c.strip(), _sin_unidades(c))):
+            objetivo = None
+            for patron in (_RE_ERR_PREFIJO, _RE_ERR_SUFIJO):
+                m = patron.match(nombre)
+                if not m:
+                    continue
+                ref = m.group(1).strip()
+                if ref in columnas and ref != c:
+                    objetivo = ref
+                elif ref in base and base[ref] != c:
+                    objetivo = base[ref]
+                if objetivo:
+                    break
+            if objetivo:
+                pares[c] = objetivo
                 break
     return pares
 

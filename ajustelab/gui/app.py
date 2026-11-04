@@ -8,6 +8,7 @@ restablecer desde Ver). La disposición se recuerda entre sesiones.
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -27,11 +28,12 @@ from .. import __version__  # noqa: E402
 from ..datos import EXTENSIONES, EXT_HOJA, ErrorDatos, hojas, leer_tabla, leer_texto  # noqa: E402
 from . import ejemplos, sesion  # noqa: E402
 from .acerca import DialogoAcercaDe, ImagenFlotante  # noqa: E402
-from .dialogos import DialogoPersonalizar, copiar_figura, exportar, renderizar  # noqa: E402
+from .dialogos import DialogoPersonalizar, copiar_figura, exportar, figura_para  # noqa: E402
 from .estilo import hoja_estilo  # noqa: E402
-from .grafica import COLORES_PUBLICACION, Escena, Grafica, con_coma  # noqa: E402
+from .grafica import Escena, Grafica, con_coma  # noqa: E402
 from .iconos import icono, icono_aplicacion  # noqa: E402
 from .paneles import PanelAjuste, PanelInterpolacion, PanelInterseccion, PanelSeleccion  # noqa: E402
+from .representar import PanelRepresentar  # noqa: E402
 from .tabla import PanelDatos  # noqa: E402
 from .tema import GestorTema  # noqa: E402
 from .trabajos import Trabajo  # noqa: E402
@@ -45,7 +47,7 @@ ATAJOS = [
     ("Ctrl+N", "Nueva sesión"), ("Ctrl+Mayús+V", "Pegar el portapapeles como tabla nueva"),
     ("Ctrl+Z / Ctrl+Mayús+Z", "Deshacer / rehacer cambios en los datos"),
     ("Ctrl+Intro", "Ejecutar la pestaña activa (ajustar, probar modelos…)"),
-    ("Ctrl+1 … Ctrl+4", "Ir a Ajuste, Selección, Interpolación, Intersección"),
+    ("Ctrl+1 … Ctrl+5", "Ir a Representar, Ajuste, Selección, Interpolación, Intersección"),
     ("Ctrl+E / Ctrl+Mayús+C", "Exportar gráfica / copiarla al portapapeles"),
     ("Clic en un punto", "Excluir o volver a incluir"), ("Región / Rango", "Arrastrar sobre la gráfica"),
     ("Ctrl+C / Ctrl+V en la tabla", "Copiar / pegar un bloque"), ("Supr en la tabla", "Vaciar celdas"),
@@ -77,6 +79,10 @@ class VentanaPrincipal(QMainWindow):
         self._ruta_datos: Path | None = None
         self._ruta_sesion: Path | None = None
         self._ultima_exportacion: dict | None = None
+        try:  # los ajustes de la última exportación se recuerdan entre sesiones
+            self._ultima_exportacion = json.loads(self.ajustes.value("exportacion", "") or "null")
+        except (TypeError, ValueError):
+            self._ultima_exportacion = None
         self.coma_decimal = self.ajustes.value("coma_decimal", False, type=bool)
         self.pila = QUndoStack(self)
 
@@ -95,11 +101,12 @@ class VentanaPrincipal(QMainWindow):
         self.paneles = []
         self.pestanas = QTabWidget()
         self.pestanas.setDocumentMode(True)
-        for clase in (PanelAjuste, PanelSeleccion, PanelInterpolacion, PanelInterseccion):
+        # «Representar» va primero: lo natural es mirar los datos antes de ajustarlos
+        for clase in (PanelRepresentar, PanelAjuste, PanelSeleccion, PanelInterpolacion, PanelInterseccion):
             p = clase(self)
             self.paneles.append(p)
             self.pestanas.addTab(p, icono(p.nombre_icono), p.titulo)
-        self.p_ajuste, self.p_seleccion, self.p_interp, self.p_inter = self.paneles
+        self.p_repr, self.p_ajuste, self.p_seleccion, self.p_interp, self.p_inter = self.paneles
 
         # --- paneles acoplables
         self.dock_datos = self._dock("Datos", "dock_datos", self.panel_datos, Qt.LeftDockWidgetArea)
@@ -416,13 +423,19 @@ class VentanaPrincipal(QMainWindow):
 
     def ejecutar_pestana(self) -> None:
         p = self.panel_activo()
-        accion = {PanelAjuste: "ajustar", PanelSeleccion: "ejecutar", PanelInterpolacion: "interpolar",
-                  PanelInterseccion: "calcular"}[type(p)]
+        accion = {PanelRepresentar: "ejecutar", PanelAjuste: "ajustar", PanelSeleccion: "ejecutar",
+                  PanelInterpolacion: "interpolar", PanelInterseccion: "calcular"}[type(p)]
         getattr(p, accion)()
 
     def actualizar_grafica(self) -> None:
-        if not getattr(self, "paneles", None) or len(self.paneles) < 4:
+        if not getattr(self, "paneles", None) or len(self.paneles) < 5:
             return  # todavía construyéndose
+        activo = self.panel_activo()
+        if isinstance(activo, PanelRepresentar):  # se dibuja directamente desde la tabla
+            escena = activo.escena_tabla()
+            escena.coma_decimal = self.coma_decimal
+            self.grafica.mostrar(escena)
+            return
         obtenidos = self.obtener_datos(silencioso=True)
         if obtenidos is None:
             self.grafica.mostrar(Escena())
@@ -522,14 +535,17 @@ class VentanaPrincipal(QMainWindow):
         df, descripcion = ejemplos.generar(clave)
         self._ruta_datos = self._ruta_sesion = None
         self.cargar_tabla(df, descripcion)
-        sugerencia = {"descarga": (0, "exponencial_fondo"), "pico": (1, None), "pendulo": (0, "seno_amortiguado"),
-                      "rectas": (3, None), "calibracion": (2, None)}[clave]
-        self.pestanas.setCurrentIndex(sugerencia[0])
+        sugerencia = {"descarga": (self.p_ajuste, "exponencial_fondo"), "pico": (self.p_seleccion, None),
+                      "pendulo": (self.p_ajuste, "seno_amortiguado"), "rectas": (self.p_inter, None),
+                      "calibracion": (self.p_interp, None), "carga": (self.p_repr, None)}[clave]
+        self.pestanas.setCurrentWidget(sugerencia[0])
         if sugerencia[1]:
             self.p_ajuste.selector.seleccionar_clave(sugerencia[1])
         if clave == "rectas":
             self.p_inter.n.setValue(8)
-        self.notificar(f"{ejemplos.nombres()[clave]} — pulsa Ctrl+Intro para calcular.", "neutro")
+        pista = ("prueba «Paneles apilados» o quita las barras de error" if clave == "carga"
+                 else "pulsa Ctrl+Intro para calcular")
+        self.notificar(f"{ejemplos.nombres()[clave]} — {pista}.", "neutro")
 
     def pegar_tabla_nueva(self) -> None:
         texto = QGuiApplication.clipboard().text()
@@ -651,12 +667,17 @@ class VentanaPrincipal(QMainWindow):
                      str(Path(self.ajustes.value("ultima_carpeta", "")) / base))
         if v is not None:
             self._ultima_exportacion = v
+            self.ajustes.setValue("exportacion", json.dumps(v))  # se recuerda entre sesiones
 
     def copiar_grafica(self) -> None:
-        v = self._ultima_exportacion or {"ancho": 16.0, "alto": 11.0}
-        fig = renderizar(self.grafica.escena, self.grafica.opciones, COLORES_PUBLICACION, False, v["ancho"], v["alto"])
-        copiar_figura(fig)
-        self.notificar("Gráfica copiada al portapapeles.", "bueno")
+        """Con los últimos ajustes de exportación (tamaño, letra, estilo…)."""
+        if self.centro.currentWidget() is not self.grafica:
+            self.mostrar_error("Todavía no hay ninguna gráfica.")
+            return
+        v = self._ultima_exportacion or {"ancho": 16.0, "alto": 12.0}
+        copiar_figura(figura_para(self.grafica, v), dpi=min(int(v.get("dpi", 200)), 300),
+                      transparente=v.get("transparente", False))
+        self.notificar("Gráfica copiada al portapapeles (imagen y SVG).", "bueno")
 
     def personalizar_grafica(self) -> None:
         dlg = DialogoPersonalizar(self.grafica.opciones, self)

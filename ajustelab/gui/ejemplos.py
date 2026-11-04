@@ -13,6 +13,16 @@ def _descarga(rng):
     return pd.DataFrame({"t (s)": t.round(4), "V (V)": V.round(4), "dt": 0.02, "dV": 0.04})
 
 
+def _carga(rng):
+    """Carga de un condensador: tensión (V) y corriente (mA) frente al tiempo, con
+    escalas muy distintas: para «Representar» con dos ejes y."""
+    t = np.linspace(0, 10, 26)
+    tau, V0, R = 2.2, 9.0, 4.7  # s, V, kΩ
+    V = V0 * (1 - np.exp(-t / tau)) + rng.normal(0, 0.2, t.size)
+    I = V0 / R * np.exp(-t / tau) + rng.normal(0, 0.04, t.size)  # mA
+    return pd.DataFrame({"t (s)": t.round(3), "V (V)": V.round(3), "dV": 0.2, "I (mA)": I.round(4), "dI": 0.04})
+
+
 def _pico(rng):
     lam = np.linspace(580, 600, 41)
     verdad = 120 * np.exp(-(lam - 589.3) ** 2 / (2 * 1.8**2)) + 15
@@ -39,6 +49,7 @@ def _calibracion(rng):
 
 
 EJEMPLOS = {
+    "carga": ("Carga de un condensador: V e I frente a t (dos ejes)", _carga),
     "descarga": ("Descarga de un condensador (exponencial con fondo)", _descarga),
     "pico": ("Pico espectral (gaussiana con σ = √N)", _pico),
     "pendulo": ("Péndulo amortiguado (oscilación)", _pendulo),

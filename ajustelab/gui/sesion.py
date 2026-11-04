@@ -45,6 +45,7 @@ def a_dict(ventana) -> dict:
         "rango_x": list(m.rango_x) if m.rango_x is not None else None,
         "grafica": ventana.grafica.opciones.a_dict(),
         "pestana": ventana.pestanas.currentIndex(),
+        "pestana_panel": type(ventana.panel_activo()).__name__,
         "paneles": {p.__class__.__name__: p.estado() for p in ventana.paneles},
     }
 
@@ -93,4 +94,8 @@ def restaurar(ventana, d: dict) -> None:
     for p in ventana.paneles:
         if p.__class__.__name__ in estados:
             p.restaurar(estados[p.__class__.__name__])
-    ventana.pestanas.setCurrentIndex(int(d.get("pestana", 0)))
+    por_nombre = {type(p).__name__: p for p in ventana.paneles}
+    if d.get("pestana_panel") in por_nombre:
+        ventana.pestanas.setCurrentWidget(por_nombre[d["pestana_panel"]])
+    else:  # sesiones anteriores a «Representar» (que ahora es la primera pestaña)
+        ventana.pestanas.setCurrentIndex(min(int(d.get("pestana", 0)) + 1, len(ventana.paneles) - 1))

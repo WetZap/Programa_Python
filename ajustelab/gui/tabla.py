@@ -395,7 +395,7 @@ class PanelDatos(QWidget):
 
         self.modelo.dataChanged.connect(lambda *_: self.datosCambiados.emit())
         self.modelo.modelReset.connect(self._al_reiniciar)
-        self.modelo.headerDataChanged.connect(lambda *_: self._rellenar_combos(conservar=True))
+        self.modelo.headerDataChanged.connect(self._al_renombrar)
         self.modelo.layoutChanged.connect(lambda *_: self.datosCambiados.emit())
         self.modelo.rowsInserted.connect(lambda *_: self.datosCambiados.emit())
         self.modelo.rangoCambiado.connect(self._mostrar_rango)
@@ -428,6 +428,10 @@ class PanelDatos(QWidget):
                 asign.update(dx=cols[2], dy=cols[3])
         self._rellenar_combos(asignacion=asign)
         self.datosCambiados.emit()
+
+    def _al_renombrar(self, *_):
+        self._rellenar_combos(conservar=True)
+        self.datosCambiados.emit()  # los nombres salen en las etiquetas de la gráfica
 
     def _al_reiniciar(self):
         self._rellenar_combos(conservar=True)
