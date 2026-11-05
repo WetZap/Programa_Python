@@ -12,7 +12,10 @@
 * Vista previa del modelo con los valores iniciales, comparación de varios
   ajustes, banda de confianza o de predicción.
 * Modo «Representar» (sin ajuste): varias series frente a una misma x, en el eje
-  izquierdo o en el derecho (o en dos paneles apilados), con o sin barras de error.
+  izquierdo o en el derecho (o en dos paneles apilados), con o sin barras de error,
+  y con el eje x partido (cortes «//») para saltarse tramos sin datos.
+  Los demás tipos (histograma, barras, sectores, cajas, polar) están en
+  :mod:`ajustelab.gui.graficas` y se dibujan con ``Escena.especial``.
 """
 from __future__ import annotations
 
@@ -23,6 +26,7 @@ import numpy as np
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
 from matplotlib.figure import Figure
 from matplotlib.patches import Ellipse
+from matplotlib.transforms import IdentityTransform
 from matplotlib.widgets import RectangleSelector, SpanSelector
 from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QToolButton, QVBoxLayout, QWidget
@@ -136,10 +140,82 @@ class Escena:
     nombre_x: str = ""
     apilados: bool = False  # True: dos paneles con la misma x en vez de dos ejes y
     barras_error: bool = True
+    cortes: list[tuple[float, float]] = field(default_factory=list)  # tramos de x que se quitan
+    # Otros tipos de gráfica (histograma, barras…): objeto con dibujar(fig, o, c, oscuro)
+    especial: object | None = None
 
     @property
     def vacia(self) -> bool:
-        return self.datos is None and self.interseccion is None and not self.series
+        return self.datos is None and self.interseccion is None and not self.series and self.especial is None
+
+
+# ---------------------------------------------------------------------------
+# Eje x partido
+# ---------------------------------------------------------------------------
+def fusionar_cortes(cortes) -> list[tuple[float, float]]:
+    """Ordena los cortes (a, b) y une los que se solapan."""
+    limpios = sorted((min(a, b), max(a, b)) for a, b in cortes if np.isfinite(a) and np.isfinite(b) and a != b)
+    salida: list[tuple[float, float]] = []
+    for a, b in limpios:
+        if salida and a <= salida[-1][1]:
+            salida[-1] = (salida[-1][0], max(b, salida[-1][1]))
+        else:
+            salida.append((a, b))
+    return salida
+
+
+def fuera_de_cortes(x: np.ndarray, cortes) -> np.ndarray:
+    """True en los puntos que no caen dentro de ningún corte (a < x < b)."""
+    x = np.asarray(x, float)
+    m = np.ones(x.shape, bool)
+    for a, b in cortes:
+        m &= ~((x > a) & (x < b))
+    return m
+
+
+def tramos_x(x: np.ndarray, cortes) -> list[tuple[float, float]]:
+    """(mínimo, máximo) de los datos de cada tramo que queda entre los cortes."""
+    x = np.sort(np.asarray(x, float)[np.isfinite(x)])
+    tramos, desde = [], -np.inf
+    for a, b in [*fusionar_cortes(cortes), (np.inf, np.inf)]:
+        dentro = x[(x >= desde) & (x <= a)]
+        if dentro.size:
+            tramos.append((float(dentro[0]), float(dentro[-1])))
+        desde = b
+    return tramos
+
+
+def detectar_huecos(x, factor: float = 6.0, fraccion: float = 0.12) -> list[tuple[float, float]]:
+    """Huecos grandes entre datos consecutivos (más de ``factor`` veces el paso típico
+    y más de ``fraccion`` del rango): son los cortes que propone «Cortar huecos»."""
+    u = np.unique(np.asarray(x, float)[np.isfinite(x)])
+    if u.size < 4:
+        return []
+    d = np.diff(u)
+    paso = float(np.median(d))
+    rango = float(u[-1] - u[0])
+    return [(float(u[i]), float(u[i + 1])) for i in np.flatnonzero((d > factor * paso) & (d > fraccion * rango))]
+
+
+def _limites_tramos(tramos, log: bool) -> list[tuple[float, float]]:
+    """Límites de cada tramo con el mismo margen en todos, para que la escala del
+    eje sea la misma a los dos lados de cada corte."""
+    f = np.log10 if log else (lambda v: v)
+    g = (lambda v: 10 ** v) if log else (lambda v: v)
+    t = [(float(f(a)), float(f(b))) for a, b in tramos]
+    total = sum(b - a for a, b in t)
+    margen = 0.03 * total if total > 0 else 0.5
+    return [(float(g(a - margen)), float(g(b + margen))) for a, b in t]
+
+
+def _marcas_corte(izq, der, c) -> None:
+    """Marcas «//» a los dos lados del hueco, arriba y abajo del eje."""
+    from matplotlib.lines import Line2D
+
+    estilo = dict(marker=[(-0.5, -1), (0.5, 1)], markersize=9, linestyle="none", color=c["secundario"],
+                  mec=c["secundario"], mew=1.2, clip_on=False, zorder=30)
+    for ax, xa in ((izq, 1), (der, 0)):  # add_artist: no cambia los límites de los datos
+        ax.add_artist(Line2D([xa, xa], [0, 1], transform=ax.transAxes, **estilo))
 
 
 # ---------------------------------------------------------------------------
@@ -197,6 +273,10 @@ def dibujar(fig: Figure, e: Escena, o: OpcionesGrafica, c: dict, oscuro: bool = 
     (o el panel inferior)."""
     fig.clear()
     fig.set_facecolor(c["fondo"])
+    fig._ajustelab = {}
+    if e.especial is not None:
+        ax = e.especial.dibujar(fig, o, c, oscuro)
+        return ax, None, None
     if e.series:
         ax, ax2 = _dibujar_series(fig, e, o, c, oscuro)
         return ax, ax2, None
@@ -268,58 +348,87 @@ def _leyenda(ax, handles, labels, o: OpcionesGrafica, c):
 
 
 def _dibujar_series(fig: Figure, e: Escena, o: OpcionesGrafica, c: dict, oscuro: bool):
-    """Series frente a la misma x: eje y izquierdo y derecho, o dos paneles apilados."""
+    """Series frente a la misma x: eje y izquierdo y derecho, o dos paneles apilados.
+    Con cortes, el eje x se parte en tramos (misma escala en todos) separados por «//»."""
     izq = [s for s in e.series if s.eje != "der"]
     der = [s for s in e.series if s.eje == "der"]
-    ax2 = None
-    if e.apilados and izq and der:
-        ax, ax2 = fig.subplots(2, 1, sharex=True)
-        _estilo_ejes(ax2, c, o)
+    if der and not izq:  # todas en el derecho: no hace falta un segundo eje
+        izq, der = der, []
+    apilados = e.apilados and bool(der)
+    doble_eje = bool(der) and not apilados
+    todas_x = np.concatenate([s.x for s in e.series])
+    log_x = bool(o.log_x and todas_x.size and np.all(todas_x > 0))
+    cortes = fusionar_cortes(e.cortes)
+    tramos = tramos_x(todas_x, cortes) if cortes else []
+    limites = _limites_tramos(tramos, log_x) if tramos else []
+    k = max(1, len(tramos))
+    filas = 2 if apilados else 1
+    if k > 1:
+        f = np.log10 if log_x else (lambda v: v)
+        anchos = [float(f(b) - f(a)) for a, b in limites]
+        axs = fig.subplots(filas, k, sharex="col", sharey="row", squeeze=False, width_ratios=anchos)
+        motor = fig.get_layout_engine()
+        if hasattr(motor, "set"):
+            motor.set(w_pad=0.02, wspace=0.015)
     else:
-        ax = fig.subplots(1, 1)
-    _estilo_ejes(ax, c, o)
-    if der and ax2 is None:
-        if izq:
-            ax2 = ax.twinx()
-            ax2.grid(False)  # una sola rejilla, la del eje izquierdo
-            ax2.tick_params(colors=c["texto"], labelsize=o.tam_fuente * 0.9)
-            ax2.yaxis.label.set_color(c["texto"])
-            ax2.yaxis.label.set_size(o.tam_fuente)
-        else:  # todas en el derecho: no hace falta un segundo eje
-            izq, der = der, []
-    ejes = {"izq": ax, "der": ax2}
-    doble_eje = ax2 is not None and not e.apilados
+        axs = fig.subplots(filas, 1, sharex=True, squeeze=False)
+    for a in axs.flat:
+        _estilo_ejes(a, c, o)
+    gemelos: list = []
+    if doble_eje:
+        for j in range(k):
+            t = axs[0, j].twinx()
+            if gemelos:
+                t.sharey(gemelos[0])
+            t.grid(False)  # una sola rejilla, la del eje izquierdo
+            t.spines["top"].set_visible(False)  # ya están las del eje izquierdo
+            t.spines["bottom"].set_visible(False)
+            t.tick_params(colors=c["texto"], labelsize=o.tam_fuente * 0.9)
+            t.yaxis.label.set_color(c["texto"])
+            t.yaxis.label.set_size(o.tam_fuente)
+            gemelos.append(t)
+    destinos = {"izq": list(axs[0]), "der": gemelos or (list(axs[1]) if apilados else [])}
 
     for s in izq + der:
-        destino = ejes["der" if s in der else "izq"]
+        lado = "der" if s in der else "izq"
         color = s.color_en(oscuro)
-        m = np.ones(s.x.size, bool) if s.incluidos is None else s.incluidos
+        visibles = fuera_de_cortes(s.x, cortes) if cortes else np.ones(s.x.size, bool)
+        incl = np.ones(s.x.size, bool) if s.incluidos is None else s.incluidos
+        m, m_ex = incl & visibles, ~incl & visibles
         linea = "-" if s.estilo in ("linea", "puntos_linea") else "none"
         marcador = s.marcador if s.estilo in ("puntos", "puntos_linea") else "none"
-        etiqueta = s.nombre + ((" (eje dcho.)" if s in der else " (eje izq.)") if doble_eje else "")
+        etiqueta = s.nombre + ((" (eje dcho.)" if lado == "der" else " (eje izq.)") if doble_eje else "")
         dx = s.dx if e.barras_error else None
         dy = s.dy if e.barras_error else None
         sel = (lambda arr, mask: None if arr is None else arr[mask])
-        if dx is not None or dy is not None:
-            destino.errorbar(s.x[m], s.y[m], xerr=sel(dx, m), yerr=sel(dy, m), color=color, ecolor=color,
-                             linestyle=linea, marker=marcador, ms=5, linewidth=1.6, elinewidth=1, capsize=2,
-                             label=etiqueta, zorder=3)
-        else:
-            destino.plot(s.x[m], s.y[m], color=color, linestyle=linea, marker=marcador, ms=5, linewidth=1.6,
-                         label=etiqueta, zorder=3)
-        if np.any(~m) and marcador != "none":
-            destino.plot(s.x[~m], s.y[~m], linestyle="none", marker=marcador, ms=6, mfc="none", mec=color,
-                         alpha=0.5, zorder=2)
+        for j, destino in enumerate(destinos[lado]):
+            nombre = etiqueta if j == 0 else "_nolegend_"
+            if dx is not None or dy is not None:
+                destino.errorbar(s.x[m], s.y[m], xerr=sel(dx, m), yerr=sel(dy, m), color=color, ecolor=color,
+                                 linestyle=linea, marker=marcador, ms=5, linewidth=1.6, elinewidth=1, capsize=2,
+                                 label=nombre, zorder=3)
+            else:
+                destino.plot(s.x[m], s.y[m], color=color, linestyle=linea, marker=marcador, ms=5, linewidth=1.6,
+                             label=nombre, zorder=3)
+            if np.any(m_ex) and marcador != "none":
+                destino.plot(s.x[m_ex], s.y[m_ex], linestyle="none", marker=marcador, ms=6, mfc="none", mec=color,
+                             alpha=0.5, zorder=2)
 
     def etiqueta_eje(series, propia):
         if propia:
             return propia
         return ", ".join(s.nombre for s in series) if len(series) <= 2 else ""
 
+    ax = axs[0, 0]
+    ax2 = gemelos[-1] if gemelos else (axs[1, 0] if apilados else None)
     ax.set_ylabel(etiqueta_eje(izq, o.etiqueta_y))
     if ax2 is not None:
         ax2.set_ylabel(etiqueta_eje(der, o.etiqueta_y2))
-    (ax2 if e.apilados and ax2 is not None else ax).set_xlabel(o.etiqueta_x or e.nombre_x)
+    texto_x = o.etiqueta_x or e.nombre_x
+    if k > 1:
+        fig.supxlabel(texto_x, color=c["texto"], fontsize=o.tam_fuente)
+    else:
+        axs[-1, 0].set_xlabel(texto_x)
     if doble_eje:
         # Cada eje y lleva el color de sus series en la línea y las marcas (no en el
         # texto), para que se vea a qué eje pertenece cada una.
@@ -330,34 +439,56 @@ def _dibujar_series(fig: Figure, e: Escena, o: OpcionesGrafica, c: dict, oscuro:
                 a.spines[lado].set_color(color)
                 a.spines[lado].set_linewidth(1.6)
                 a.tick_params(axis="y", which="both", color=color, width=1.2)
-        ax2.spines["left"].set_visible(False)
-        ax.spines["right"].set_visible(False)
+        for j in range(k):
+            gemelos[j].spines["left"].set_visible(False)
+            axs[0, j].spines["right"].set_visible(False)
 
-    todas_x = np.concatenate([s.x for s in e.series]) if e.series else np.array([])
-    if o.log_x and todas_x.size and np.all(todas_x > 0):
-        ax.set_xscale("log")
-    for a, series, log in ((ax, izq, o.log_y), (ax2, der, o.log_y2)):
-        if a is not None and log and series and all(np.all(s.y > 0) for s in series):
-            a.set_yscale("log")
+    if log_x:
+        for a in axs.flat:
+            a.set_xscale("log")
+    for j, (lo, hi) in enumerate(limites):
+        axs[0, j].set_xlim(lo, hi)
+    for grupo, series, log in ((list(axs[0]), izq, o.log_y), (destinos["der"], der, o.log_y2)):
+        if grupo and log and series and all(np.all(s.y > 0) for s in series):
+            for a in grupo:
+                a.set_yscale("log")
+    if k > 1:  # tramos: sin líneas ni marcas en los lados interiores
+        for j in range(k):
+            for r in range(filas):
+                a = axs[r, j]
+                if j > 0:
+                    a.spines["left"].set_visible(False)
+                    a.tick_params(axis="y", which="both", left=False, labelleft=False)
+                if j < k - 1:
+                    a.spines["right"].set_visible(False)
+            if gemelos and j < k - 1:
+                gemelos[j].spines["right"].set_visible(False)
+                gemelos[j].tick_params(axis="y", which="both", right=False, labelright=False)
+        for r in range(filas):
+            for j in range(k - 1):
+                _marcas_corte(axs[r, j], axs[r, j + 1], c)
     if o.titulo:
-        ax.set_title(o.titulo, color=c["texto"], fontsize=o.tam_fuente * 1.15)
+        if k > 1:
+            fig.suptitle(o.titulo, color=c["texto"], fontsize=o.tam_fuente * 1.15)
+        else:
+            ax.set_title(o.titulo, color=c["texto"], fontsize=o.tam_fuente * 1.15)
     if o.leyenda:
         if doble_eje:
             # «best» solo mira las series de un eje: la leyenda iría encima de las del
             # otro. Se pone fuera, sobre la gráfica, en una fila.
             h1, l1 = ax.get_legend_handles_labels()
-            h2, l2 = ax2.get_legend_handles_labels()
+            h2, l2 = gemelos[0].get_legend_handles_labels()
             if len(h1) + len(h2) >= 2:
                 ley = fig.legend(h1 + h2, l1 + l2, loc="outside upper center", ncol=min(4, len(h1) + len(h2)),
                                  fontsize=o.tam_fuente * 0.85, frameon=False)
                 for t in ley.get_texts():
                     t.set_color(c["texto"])
         else:
-            for a in (ax, ax2):
-                if a is not None:
-                    h, l = a.get_legend_handles_labels()
-                    if len(h) >= 2:
-                        _leyenda(a, h, l, o, c)
+            for r in range(filas):
+                h, l = axs[r, 0].get_legend_handles_labels()
+                if len(h) >= 2:
+                    _leyenda(axs[r, 0], h, l, o, c)
+    fig._ajustelab = {"ejes": destinos, "limites": limites, "cortes": cortes}
     return ax, ax2
 
 
@@ -450,6 +581,7 @@ class Grafica(QWidget):
     puntoClicado = Signal(int)  # fila de la tabla
     regionSeleccionada = Signal(list)  # filas de la tabla dentro del rectángulo
     rangoSeleccionado = Signal(float, float)
+    corteSeleccionado = Signal(float, float)  # tramo de x que se quita (eje partido)
     personalizar = Signal()
     opcionesCambiadas = Signal()
 
@@ -478,9 +610,13 @@ class Grafica(QWidget):
         self.b_region = boton("region", "Región", "Arrastra un rectángulo para excluir (o volver a incluir) "
                                                  "todos los puntos de dentro", True)
         self.b_rango = boton("rango", "Rango", "Arrastra en horizontal para elegir el rango de x del ajuste", True)
+        self.b_cortar = boton("cortar", "Cortar", "Arrastra en horizontal sobre un tramo de x para quitarlo: "
+                                                  "el eje se parte (//) y la gráfica se acorta", True)
+        self.b_cortar.setVisible(False)  # solo en «Representar» (puntos x-y)
         self.b_personalizar = boton("personalizar", "Personalizar", "Título, etiquetas, tamaño de letra, leyenda…")
-        self.b_region.toggled.connect(lambda on: self._activar_herramienta("region" if on else None))
-        self.b_rango.toggled.connect(lambda on: self._activar_herramienta("rango" if on else None))
+        self._botones_herramienta = {"region": self.b_region, "rango": self.b_rango, "cortar": self.b_cortar}
+        for nombre, b in self._botones_herramienta.items():
+            b.toggled.connect(lambda on, n=nombre: self._activar_herramienta(n if on else None))
         self.b_personalizar.clicked.connect(self.personalizar)
 
         self.ver_residuos = QCheckBox("Residuos")
@@ -493,7 +629,7 @@ class Grafica(QWidget):
         fila = QHBoxLayout()
         fila.setContentsMargins(0, 0, 0, 0)
         fila.addWidget(self.barra)
-        for b in (self.b_region, self.b_rango, self.b_personalizar):
+        for b in (self.b_region, self.b_rango, self.b_cortar, self.b_personalizar):
             fila.addWidget(b)
         fila.addStretch(1)
         for cb in (self.ver_residuos, self.log_x, self.log_y):
@@ -511,6 +647,8 @@ class Grafica(QWidget):
         self._anotacion = None
         self._herramienta: str | None = None
         self._selector = None
+        self._selectores: list = []
+        self._objetivos: list = []  # para la etiqueta al pasar el ratón en los otros tipos
         self.lienzo.mpl_connect("button_press_event", self._al_pulsar)
         self.lienzo.mpl_connect("button_release_event", self._al_soltar)
         self.lienzo.mpl_connect("motion_notify_event", self._al_mover)
@@ -523,12 +661,20 @@ class Grafica(QWidget):
     # -- API ----------------------------------------------------------------
     def mostrar(self, escena: Escena) -> None:
         self.escena = escena
-        # Región, Rango y Residuos solo tienen sentido con un ajuste
-        sin_ajuste = bool(escena.series)
-        if sin_ajuste and self._herramienta:
+        # Región, Rango y Residuos solo tienen sentido con un ajuste; Cortar, con
+        # series x-y de «Representar»
+        sin_ajuste = bool(escena.series) or escena.especial is not None
+        modo_xy = bool(escena.series)
+        if self._herramienta and (sin_ajuste != (self._herramienta == "cortar") or (
+                self._herramienta == "cortar" and not modo_xy)):
             self._desactivar_herramientas()
         for w in (self.b_region, self.b_rango, self.ver_residuos):
             w.setEnabled(not sin_ajuste)
+        self.b_cortar.setVisible(modo_xy)
+        log_x = getattr(escena.especial, "permite_log_x", escena.especial is None)
+        log_y = getattr(escena.especial, "permite_log_y", escena.especial is None)
+        self.log_x.setEnabled(log_x)
+        self.log_y.setEnabled(log_y)
         self.redibujar()
 
     def fijar_opciones(self, o: OpcionesGrafica) -> None:
@@ -548,6 +694,7 @@ class Grafica(QWidget):
     def redibujar(self) -> None:
         self._anotacion = None
         self._puntos_px = None
+        self._objetivos = []
         e = self.escena
         if e.vacia:
             self.figura.clear()
@@ -557,6 +704,7 @@ class Grafica(QWidget):
             return
         self._ax, self._axr, self._cuadro = dibujar(self.figura, e, self.opciones, self.tema.colores(),
                                                     self.tema.oscuro)
+        self._objetivos = list(getattr(self.figura, "_ajustelab", {}).get("objetivos", []))
         if self._cuadro is not None:
             self._cuadro.draggable(True)
         if self._herramienta:
@@ -565,18 +713,18 @@ class Grafica(QWidget):
 
     # -- herramientas de selección -----------------------------------------
     def _activar_herramienta(self, nombre: str | None) -> None:
-        otro = self.b_rango if nombre == "region" else self.b_region
-        if nombre and otro.isChecked():
-            otro.blockSignals(True)
-            otro.setChecked(False)
-            otro.blockSignals(False)
+        for otro_nombre, otro in self._botones_herramienta.items():
+            if nombre and otro_nombre != nombre and otro.isChecked():
+                otro.blockSignals(True)
+                otro.setChecked(False)
+                otro.blockSignals(False)
         if nombre and self.barra.mode:  # desactiva zoom/pan de matplotlib
             (self.barra.zoom if "zoom" in str(self.barra.mode) else self.barra.pan)()
         self._herramienta = nombre
         self._crear_selector()
 
     def _desactivar_herramientas(self) -> None:
-        for b in (self.b_region, self.b_rango):
+        for b in self._botones_herramienta.values():
             b.blockSignals(True)
             b.setChecked(False)
             b.blockSignals(False)
@@ -587,9 +735,20 @@ class Grafica(QWidget):
         if self._selector is not None:
             self._selector.set_active(False)
             self._selector = None
+        for sel in self._selectores:
+            sel.set_active(False)
+        self._selectores = []
         if self._herramienta is None or self._ax is None:
             return
         c = self.tema.colores()
+        if self._herramienta == "cortar":  # un selector por tramo (y por panel)
+            ejes = getattr(self.figura, "_ajustelab", {}).get("ejes", {})
+            for ax in [*ejes.get("izq", []), *(ejes.get("der", []) if self.escena.apilados else [])]:
+                self._selectores.append(SpanSelector(
+                    ax, self._al_seleccionar_corte, "horizontal", useblit=True, button=[1], minspan=0,
+                    interactive=False, props=dict(facecolor=c["secundario"], alpha=0.22)))
+            self._selector = self._selectores[0] if self._selectores else None
+            return
         if self._herramienta == "region":
             self._selector = RectangleSelector(self._ax, self._al_seleccionar_region, useblit=True, button=[1],
                                                minspanx=3, minspany=3, spancoords="pixels", interactive=False,
@@ -617,9 +776,29 @@ class Grafica(QWidget):
         if hi > lo:
             self.rangoSeleccionado.emit(float(lo), float(hi))
 
+    def _al_seleccionar_corte(self, lo, hi) -> None:
+        self._desactivar_herramientas()
+        if hi > lo:
+            self.corteSeleccionado.emit(float(lo), float(hi))
+
     # -- interacción --------------------------------------------------------
-    def _ejes_de(self, serie: SerieDibujo):
-        return self._axr if (serie.eje == "der" and self._axr is not None) else self._ax
+    def _ejes_de(self, serie: SerieDibujo, x: float | None = None):
+        """Ejes en los que está dibujado el punto de abscisa ``x`` de la serie (con el
+        eje partido, el del tramo correspondiente; None si x cae en un corte)."""
+        info = getattr(self.figura, "_ajustelab", {})
+        ejes = info.get("ejes")
+        if not ejes:
+            return self._axr if (serie.eje == "der" and self._axr is not None) else self._ax
+        lista = ejes["der"] if (serie.eje == "der" and ejes.get("der")) else ejes["izq"]
+        limites = info.get("limites") or []
+        if x is None or len(lista) == 1 or not limites:
+            if x is not None and info.get("cortes") and not fuera_de_cortes(np.array([x]), info["cortes"])[0]:
+                return None
+            return lista[0]
+        for ax, (lo, hi) in zip(lista, limites):
+            if lo <= x <= hi:
+                return ax
+        return None
 
     def _actualizar_puntos_px(self):
         e = self.escena
@@ -632,7 +811,12 @@ class Grafica(QWidget):
             # de qué serie y qué punto es cada uno.
             trozos, indices = [], []
             for k, serie in enumerate(e.series):
-                trozos.append(self._ejes_de(serie).transData.transform(np.column_stack([serie.x, serie.y])))
+                px = np.full((serie.x.size, 2), np.nan)
+                for j, (xv, yv) in enumerate(zip(serie.x, serie.y)):
+                    ax = self._ejes_de(serie, float(xv))
+                    if ax is not None:
+                        px[j] = ax.transData.transform((xv, yv))
+                trozos.append(px)
                 indices.append(np.column_stack([np.full(serie.x.size, k), np.arange(serie.x.size)]))
             self._puntos_px = np.vstack(trozos) if trozos else None
             self._puntos_serie = np.vstack(indices) if indices else None
@@ -652,7 +836,7 @@ class Grafica(QWidget):
         return i if dist[i] <= _RADIO_CLIC_PX * self.lienzo.device_pixel_ratio else None
 
     def _dentro(self, evento) -> bool:
-        return evento.inaxes is not None and evento.inaxes in (self._ax, self._axr)
+        return evento.inaxes is not None and evento.inaxes in self.figura.axes
 
     def _fila_de(self, i: int) -> int | None:
         """Fila de la tabla del punto i (de la lista de puntos en pantalla)."""
@@ -696,7 +880,7 @@ class Grafica(QWidget):
                 texto += f" ± {s.dy[j]:.2g}"
             incluido = True if s.incluidos is None else bool(s.incluidos[j])
             texto += "\n(clic: " + ("excluir la fila" if incluido else "incluir la fila") + ")"
-            return texto, self._ejes_de(s), s.x[j], s.y[j]
+            return texto, self._ejes_de(s, float(s.x[j])) or self._ax, s.x[j], s.y[j]
         d = self.escena.datos
         fila = int(self.escena.filas[i]) + 1 if self.escena.filas is not None else i + 1
         texto = f"fila {fila}\n{d.nombre_x} = {d.x[i]:.6g}" + (f" ± {d.dx[i]:.2g}" if d.tiene_dx else "")
@@ -705,6 +889,9 @@ class Grafica(QWidget):
         return texto, self._ax, d.x[i], d.y[i]
 
     def _al_mover(self, evento):
+        if self._objetivos and not (self.barra.mode or self._herramienta):
+            self._etiqueta_especial(evento)
+            return
         if self.barra.mode or self._herramienta or self._puntos_px is None:
             return
         i = self._punto_cercano(evento) if self._dentro(evento) else None
@@ -727,4 +914,31 @@ class Grafica(QWidget):
             texto, (xp, yp), xytext=desplaz, textcoords="offset points", fontsize=8, color=c["texto"],
             ha="right" if fx > 0.6 else "left", va="top" if fy > 0.6 else "bottom",
             bbox=dict(boxstyle="round,pad=0.4", fc=c["ejes"], ec=c["rejilla"], alpha=0.95), zorder=20)
+        self.lienzo.draw_idle()
+
+    def _etiqueta_especial(self, evento) -> None:
+        """Etiqueta al pasar el ratón por una barra, un sector, una caja… Cada objetivo
+        es una función evento → texto (o None si el ratón no está encima)."""
+        texto = None
+        if evento.inaxes is not None:
+            for objetivo in self._objetivos:
+                texto = objetivo(evento)
+                if texto:
+                    break
+        if texto is None and self._anotacion is None:
+            return
+        if self._anotacion is not None:
+            self._anotacion.remove()
+            self._anotacion = None
+        if texto:
+            if self.escena.coma_decimal:
+                texto = con_coma(texto)
+            c = self.tema.colores()
+            ancho, alto = self.lienzo.get_width_height(physical=True)
+            derecha, arriba = evento.x > 0.6 * ancho, evento.y > 0.6 * alto
+            self._anotacion = self.figura.text(
+                evento.x + (-14 if derecha else 14), evento.y + (-14 if arriba else 14), texto,
+                transform=IdentityTransform(), fontsize=8, color=c["texto"], ha="right" if derecha else "left",
+                va="top" if arriba else "bottom", zorder=50,
+                bbox=dict(boxstyle="round,pad=0.4", fc=c["ejes"], ec=c["rejilla"], alpha=0.95))
         self.lienzo.draw_idle()

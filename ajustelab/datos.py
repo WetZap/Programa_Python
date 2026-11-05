@@ -222,12 +222,61 @@ def _fila_numerica(toks: Sequence, decimal: str) -> list[float] | None:
     return valores if hay_numero else None
 
 
+def _fila_datos(toks: Sequence, decimal: str, cols_texto: frozenset = frozenset()) -> list | None:
+    """Como ``_fila_numerica``, pero las columnas de ``cols_texto`` (etiquetas) se
+    guardan como texto. Las demás tienen que ser números o estar vacías."""
+    if not cols_texto:
+        return _fila_numerica(toks, decimal)
+    valores, hay_numero = [], False
+    for j, t in enumerate(toks):
+        if j in cols_texto:
+            texto = "" if t is None else str(t).strip().strip('"').strip("'").strip()
+            valores.append(texto or None)
+            continue
+        v, estado = _a_numero(t, decimal)
+        if estado == _FALLO:
+            return None
+        hay_numero |= estado == _NUMERO
+        valores.append(v)
+    return valores if hay_numero else None
+
+
+def _fragmento_numerico(texto: str, delimitador: str | None) -> bool:
+    """¿Es ``texto`` un trozo de fila numérica partido con el separador
+    equivocado (``"2000;4"``, ``"Pb;0"``)?"""
+    for c in ";,\t|":
+        if c != delimitador and c in texto:
+            if any(_a_numero(t, dec)[1] == _NUMERO for t in texto.split(c) for dec in (".", ",")):
+                return True
+    return False
+
+
+def _columnas_texto(filas: list[Sequence], decimal: str) -> frozenset:
+    """Columnas de etiquetas: texto en casi todas las filas (≥ 60 %, casi nunca un
+    número) mientras las demás columnas tienen números. Vacío si no hay."""
+    if not filas:
+        return frozenset()
+    nc = max(len(f) for f in filas)
+    estados = np.full((len(filas), nc), _NULO)
+    for i, f in enumerate(filas):
+        for j, t in enumerate(f):
+            estados[i, j] = _a_numero(t, decimal)[1]
+    texto = (estados == _FALLO).mean(axis=0)
+    numero = (estados == _NUMERO).mean(axis=0)
+    cols = frozenset(j for j in range(nc) if texto[j] >= 0.6 and numero[j] <= 0.2)
+    if not cols or not any(numero[j] >= 0.5 for j in range(nc) if j not in cols):
+        return frozenset()
+    return cols
+
+
 def _moda(valores: list[int]) -> int:
     return Counter(valores).most_common(1)[0][0]
 
 
-def _detectar_dialecto(lineas: list[str], delimitador=None, decimal=None) -> tuple[str | None, str, int]:
-    """Elige (delimitador, decimal, ncols) que maximiza filas numéricas consistentes."""
+def _detectar_dialecto(lineas: list[str], delimitador=None, decimal=None) -> tuple[str | None, str, int, frozenset]:
+    """Elige (delimitador, decimal, ncols, columnas de texto) que maximiza las filas de
+    datos consistentes. Primero se prueban filas totalmente numéricas; una lectura
+    con columnas de etiquetas (texto) solo gana si lee estrictamente más filas."""
     muestra = lineas[-150:]
     delims = (delimitador,) if delimitador is not None else _DELIMITADORES
     decimales = (decimal,) if decimal is not None else (".", ",")
@@ -241,7 +290,33 @@ def _detectar_dialecto(lineas: list[str], delimitador=None, decimal=None) -> tup
             nc = _moda(ncols)
             puntos = (sum(n == nc for n in ncols) / len(muestra), nc)
             if puntos > mejor_puntos:  # estricto: en empate gana el candidato anterior
-                mejor, mejor_puntos = (d, dec, nc), puntos
+                mejor, mejor_puntos = (d, dec, nc, frozenset()), puntos
+    # Lectura con columnas de etiquetas: solo gana si lee estrictamente más filas
+    # (así los ficheros numéricos se leen exactamente igual que antes).
+    texto, texto_puntos = None, None
+    for d in delims:
+        d = None if d in (" ", "espacios", "whitespace") else d
+        if d is None:
+            continue  # con espacios, una etiqueta de varias palabras partiría la fila
+        for dec in decimales:
+            partidas = [_partir(l, d) for l in muestra]
+            largos = [len(p) for p in partidas if len(p) > 1]
+            if not largos:
+                continue
+            nc = _moda(largos)
+            candidatas = [p for p in partidas if len(p) == nc]
+            cols = _columnas_texto(candidatas, dec)
+            if not cols:
+                continue
+            celdas = [str(p[j]) for p in candidatas for j in cols if p[j]]
+            if sum(_fragmento_numerico(c, d) for c in celdas) > len(celdas) / 2:
+                continue  # «2000;4»: el separador real es otro
+            buenas = sum(_fila_datos(p, dec, cols) is not None for p in candidatas)
+            puntos = (buenas / len(muestra), len(candidatas) / len(muestra), nc)
+            if texto_puntos is None or puntos > texto_puntos:
+                texto, texto_puntos = (d, dec, nc, cols), puntos
+    if texto is not None and texto_puntos[0] > mejor_puntos[0]:
+        mejor = texto
     if mejor is None:
         raise ErrorDatos("No se ha encontrado ningún bloque de datos numéricos.")
     return mejor
@@ -257,13 +332,21 @@ def _nombres_unicos(nombres: list[str]) -> list[str]:
     return salida
 
 
-def _construir_tabla(filas: list[list[float]], cabecera: list[str] | None, info: dict) -> pd.DataFrame:
+def _construir_tabla(filas: list[list], cabecera: list[str] | None, info: dict) -> pd.DataFrame:
+    """Columnas numéricas (float) y, si las hay, columnas de etiquetas (texto)."""
     ncols = max(len(f) for f in filas)
-    matriz = np.full((len(filas), ncols), np.nan)
+    matriz = np.full((len(filas), ncols), np.nan, dtype=object)
     for i, f in enumerate(filas):
         matriz[i, : len(f)] = f
     nombres = _nombres_unicos(cabecera if cabecera and len(cabecera) == ncols else [f"col{i + 1}" for i in range(ncols)])
-    df = pd.DataFrame(matriz, columns=nombres)
+    columnas = {}
+    for j, nombre in enumerate(nombres):
+        col = matriz[:, j]
+        if any(isinstance(v, str) for v in col):
+            columnas[nombre] = pd.Series([v if isinstance(v, str) else None for v in col], dtype=object)
+        else:
+            columnas[nombre] = pd.Series([np.nan if v is None else v for v in col], dtype=float)
+    df = pd.DataFrame(columnas)
     df = df.loc[:, df.notna().any(axis=0)]  # columnas vacías (p. ej. osciloscopios Tektronix)
     df.attrs.update(info)
     return df
@@ -306,7 +389,7 @@ def leer_texto(texto: str, *, delimitador: str | None = None, decimal: str | Non
     if not utiles:
         raise ErrorDatos("El texto no contiene líneas de datos.")
 
-    delim, dec, ncols = _detectar_dialecto(utiles, delimitador, decimal)
+    delim, dec, ncols, cols_texto = _detectar_dialecto(utiles, delimitador, decimal)
 
     # Bloque contiguo más largo de filas numéricas con ncols columnas
     # (los comentarios intercalados no rompen el bloque).
@@ -316,7 +399,7 @@ def leer_texto(texto: str, *, delimitador: str | None = None, decimal: str | Non
     for i, (es_com, s) in enumerate(lineas):
         if es_com:
             continue
-        fila = _fila_numerica(_partir(s, delim), dec)
+        fila = _fila_datos(_partir(s, delim), dec, cols_texto)
         if fila is not None and len(fila) == ncols:
             filas_validas[i] = fila
             actual.append(i)
@@ -328,11 +411,13 @@ def leer_texto(texto: str, *, delimitador: str | None = None, decimal: str | Non
     # Columnas que realmente tienen datos en el bloque. Algunos equipos
     # (osciloscopios Tektronix) ponen metadatos en otras columnas de las primeras
     # filas: se recuperan esas filas si las columnas de datos son numéricas.
-    cols_datos = [j for j in range(ncols) if any(not np.isnan(filas_validas[i][j]) for i in bloque)]
+    cols_datos = [j for j in range(ncols) if j not in cols_texto
+                  and any(not np.isnan(filas_validas[i][j]) for i in bloque)]
     while bloque and bloque[0] > 0 and not lineas[bloque[0] - 1][0]:
         i = bloque[0] - 1
         toks = _partir(lineas[i][1], delim)
-        if len(toks) > max(cols_datos) and all(_a_numero(toks[j], dec)[1] == _NUMERO for j in cols_datos):
+        if (cols_datos and len(toks) > max(cols_datos)
+                and all(_a_numero(toks[j], dec)[1] == _NUMERO for j in cols_datos)):
             fila = [np.nan] * ncols
             for j in cols_datos:
                 fila[j] = _a_numero(toks[j], dec)[0]
@@ -374,6 +459,14 @@ def _leer_hoja(ruta: Path, hoja, decimal: str | None) -> pd.DataFrame:
         textos = [c for f in filas for c in f if isinstance(c, str) and re.fullmatch(r"\s*[+-]?\d+,\d+\s*", c)]
         decimal = "," if textos else "."
     convertidas = [_fila_numerica(f, decimal) if f else None for f in filas]
+    largos = [len(f) for f in filas if len(f) > 1]
+    if largos:  # ¿una columna de etiquetas (texto) junto a columnas de números?
+        nc = _moda(largos)
+        cols = _columnas_texto([f for f in filas if len(f) == nc], decimal)
+        if cols:
+            con_texto = [_fila_datos(f, decimal, cols) if f else None for f in filas]
+            if sum(v is not None for v in con_texto) > sum(v is not None for v in convertidas):
+                convertidas = con_texto
     longitudes = [len(v) for v in convertidas if v is not None]
     if not longitudes:
         raise ErrorDatos("La hoja no contiene un bloque de datos numéricos.")
@@ -433,8 +526,7 @@ def leer_tabla(ruta: str | Path, *, hoja=None, delimitador: str | None = None, d
     elif ext == ".json":
         with open(ruta, encoding="utf-8") as fh:
             obj = json.load(fh)
-        df = pd.DataFrame(obj).apply(pd.to_numeric, errors="coerce")
-        df = df.loc[:, df.notna().any(axis=0)]
+        df = _numeros_y_etiquetas(pd.DataFrame(obj))
     elif ext == ".npy":
         arr = np.load(ruta, allow_pickle=False)
         df = _tabla_desde_arrays({"col": arr}) if arr.ndim == 2 else pd.DataFrame({"col1": arr.astype(float)})
@@ -454,13 +546,27 @@ def leer_tabla(ruta: str | Path, *, hoja=None, delimitador: str | None = None, d
             df = pd.read_parquet(ruta) if ext == ".parquet" else pd.read_feather(ruta)
         except ImportError as e:
             raise ErrorDatos("Para .parquet/.feather instala 'pyarrow'.") from e
-        df = df.apply(pd.to_numeric, errors="coerce")
+        df = _numeros_y_etiquetas(df)
     else:  # texto (incluye extensiones desconocidas)
         df = leer_texto(_decodificar(ruta.read_bytes()), delimitador=delimitador, decimal=decimal)
     if df.empty or df.shape[1] == 0:
         raise ErrorDatos(f"No se han encontrado datos numéricos en '{ruta.name}'.")
     df.attrs["origen"] = str(ruta)
     return df
+
+
+def _numeros_y_etiquetas(df: pd.DataFrame) -> pd.DataFrame:
+    """Columnas numéricas como float; las que son casi todo texto se conservan
+    como etiquetas; las vacías se quitan."""
+    salida = {}
+    for c in df.columns:
+        num = pd.to_numeric(df[c], errors="coerce")
+        textos = df[c].map(lambda v: isinstance(v, str) and bool(v.strip()))
+        if num.notna().any():
+            salida[str(c)] = num.astype(float)
+        elif textos.mean() >= 0.6:
+            salida[str(c)] = df[c].map(lambda v: v.strip() if isinstance(v, str) and v.strip() else None)
+    return pd.DataFrame(salida)
 
 
 def hojas(ruta: str | Path) -> list[str]:
@@ -541,9 +647,12 @@ def a_datos(
     Las filas con NaN en las columnas usadas se descartan (se cuentan en
     ``Datos.filas_descartadas``).
     """
-    cols = list(tabla.columns)
     avisos: list[str] = []
     if x is None and y is None and dx is None and dy is None:
+        etiquetas = [c for c in tabla.columns if not pd.api.types.is_numeric_dtype(tabla[c])]
+        if etiquetas:  # las columnas de etiquetas (texto) no entran en el reparto automático
+            tabla = tabla.drop(columns=etiquetas)
+        cols = list(tabla.columns)
         pares = _emparejar_errores([str(c) for c in cols])
         valores = [c for c in cols if c not in pares]
         if pares and len(valores) >= 2:
@@ -573,7 +682,12 @@ def a_datos(
         avisos.append(f"Se han descartado {descartadas} filas con valores vacíos.")
 
     def col(c):
-        return None if c is None else limpia[c].to_numpy(dtype=float)
+        if c is None:
+            return None
+        try:
+            return limpia[c].to_numpy(dtype=float)
+        except (TypeError, ValueError):
+            raise ErrorDatos(f"La columna '{c}' tiene texto (etiquetas), no números.") from None
 
     datos = Datos(
         x=col(cx),

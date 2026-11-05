@@ -213,6 +213,18 @@ def _representar(p):
         p.drawEllipse(QPointF(x, y), 1.3, 1.3)
 
 
+def _cortar(p):  # eje x partido: dos tramos y «//»
+    p.drawLine(QPointF(3, 18), QPointF(9, 18))
+    p.drawLine(QPointF(15, 18), QPointF(21, 18))
+    p.drawLine(QPointF(9, 21), QPointF(11, 15))
+    p.drawLine(QPointF(13, 21), QPointF(15, 15))
+    p.save()
+    p.setBrush(p.pen().color())
+    for x, y in ((5, 12), (7.5, 9), (17, 7), (19.5, 5)):
+        p.drawEllipse(QPointF(x, y), 1.3, 1.3)
+    p.restore()
+
+
 def _anadir(p):
     p.drawLine(QPointF(12, 5), QPointF(12, 19))
     p.drawLine(QPointF(5, 12), QPointF(19, 12))
@@ -223,7 +235,7 @@ _DIBUJOS: dict[str, _Dibujo] = {
     "pegar": _pegar, "copiar": _copiar, "exportar": _exportar, "ajustar": _ajustar, "region": _region,
     "rango": _rango, "personalizar": _personalizar, "seleccion": _seleccion, "ejemplo": _ejemplo,
     "info": _info, "quitar": _quitar, "estimar": _estimar, "usar": _flecha_abajo,
-    "representar": _representar, "anadir": _anadir,
+    "representar": _representar, "anadir": _anadir, "cortar": _cortar,
 }
 
 # Equivalencias con los iconos de tema de Qt ≥ 6.7 (nombre del enum) y freedesktop

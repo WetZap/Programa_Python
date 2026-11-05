@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import atexit
 import io
+import re
 from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
@@ -24,7 +25,8 @@ from PySide6.QtGui import QColor, QGuiApplication, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFileDialog,
                                QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit, QSpinBox, QVBoxLayout)
 
-from .grafica import COLORES_PUBLICACION, Escena, OpcionesGrafica, _malla, dibujar
+from .grafica import (COLORES_PUBLICACION, Escena, OpcionesGrafica, _malla, dibujar, fuera_de_cortes,
+                      fusionar_cortes)
 
 # formato: (nombre en el diálogo, extensión, vectorial)
 FORMATOS = {
@@ -47,7 +49,7 @@ ANCHOS = {
 PROPORCIONES = {"4:3": 3 / 4, "3:2": 2 / 3, "Áurea (1,618 : 1)": 1 / 1.618, "16:9": 9 / 16, "1:1": 1.0,
                 "Libre": None}
 FUENTES = {
-    "sans": "Sans (DejaVu Sans, como en pantalla)",
+    "sans": "Sans (Inter, como en pantalla)",
     "serif": "Serif (STIX, tipo Times; fórmulas a juego)",
 }
 
@@ -216,6 +218,8 @@ def tablas_escena(escena: Escena, n: int = 400) -> dict[str, pd.DataFrame]:
     """Los números que hay dibujados, como tablas: puntos, curvas y bandas."""
     t: dict[str, pd.DataFrame] = {}
     e = escena
+    if e.especial is not None:
+        return e.especial.tablas()
     if e.series:
         columnas = {}
         filas = sorted({int(f) for s in e.series if s.filas is not None for f in s.filas})
@@ -231,6 +235,8 @@ def tablas_escena(escena: Escena, n: int = 400) -> dict[str, pd.DataFrame]:
                 columnas[f"σ {e.nombre_x}"] = pd.Series(s.dx, index=idx)
         df = pd.DataFrame({e.nombre_x or "x": x, **columnas})
         df.index = pd.Index(df.index + 1, name="fila")  # filas como en la tabla (desde 1)
+        if e.cortes:  # lo que cae en un corte no está dibujado
+            df = df[fuera_de_cortes(df[e.nombre_x or "x"].to_numpy(float), fusionar_cortes(e.cortes))]
         t["datos"] = df.reset_index()
         return t
     if e.interseccion is not None:
@@ -277,6 +283,7 @@ def tablas_escena(escena: Escena, n: int = 400) -> dict[str, pd.DataFrame]:
 def guardar_tablas(escena: Escena, ruta_figura: Path) -> list[Path]:
     rutas = []
     for nombre, df in tablas_escena(escena).items():
+        nombre = re.sub(r"[^\w.-]+", "_", nombre).strip("_") or "datos"
         ruta = ruta_figura.with_name(f"{ruta_figura.stem}_{nombre}.csv")
         df.to_csv(ruta, index=False, encoding="utf-8")
         rutas.append(ruta)

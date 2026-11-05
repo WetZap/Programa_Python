@@ -59,11 +59,16 @@ o como **biblioteca de Python**.
 - **Resultados listos para el informe**: redondeo con la regla del PDG, tabla de parámetros en LaTeX,
   gráficas PNG/PDF/SVG a 300 ppp, tramos de spline en LaTeX/CSV.
 - **Representar sin ajustar**: varias columnas frente a una misma x, con eje y izquierdo y derecho (o
-  paneles apilados), con o sin barras de error.
+  paneles apilados), con o sin barras de error, y con el **eje x partido** (`//`) para saltarse tramos
+  sin datos.
+- **Más tipos de gráfica**: **histogramas** (con errores √N, varias reglas para los intervalos y ajuste
+  de una normal, Poisson o exponencial con test χ²), **barras**, **sectores**, **cajas / violín** y
+  **polar**. La tabla admite **columnas de texto** (etiquetas) para las categorías.
 - **Interfaz cómoda**: vista previa del modelo, parámetros fijos y con límites, exclusión de puntos
   con un clic o por región, rango de ajuste arrastrando, deshacer/rehacer, comparación de modelos
   superpuestos, sesiones `.ajustelab`, exportación para publicación y coma decimal opcional.
-- **Tema claro/oscuro** que sigue al sistema y cálculos en segundo plano. Funciona en **Windows,
+- **Tipografía Inter** en la interfaz y en las gráficas (incluida, no hace falta instalarla), con
+  cifras tabulares en las tablas. **Tema claro/oscuro** que sigue al sistema y cálculos en segundo plano. Funciona en **Windows,
   macOS y Linux** (X11 y Wayland).
 
 ---
@@ -242,14 +247,14 @@ python -m ajustelab          # equivalente a «ajustelab»
 
 1. **Carga los datos.** Usa *Abrir* (Ctrl+O), arrastra el fichero a la ventana, pega una tabla copiada de
    LibreOffice o Excel (Ctrl+Mayús+V) o escribe en una tabla vacía. Si es la primera vez, *Datos de
-   ejemplo* carga seis conjuntos sintéticos, uno por cada tipo de análisis.
+   ejemplo* carga diez conjuntos sintéticos: uno por cada tipo de análisis y de gráfica.
 2. **Comprueba las columnas** x, y, σx y σy. Se asignan solas (ver [convenio](#asignación-de-columnas)).
    σ puede ser una columna, ninguna o un valor *constante* (p. ej. la resolución del instrumento).
 3. **Elige una pestaña** y pulsa **Ctrl+Intro**:
 
 | Pestaña | Qué hace |
 |---|---|
-| **Representar** | Dibuja las columnas que elijas frente a una x, **sin ajustar nada**: cada serie con su incertidumbre (o sin ella), su eje y (izquierdo o derecho), su estilo (puntos, línea o ambos) y su color. Ver [Representar datos](#representar-datos-sin-ajustar). |
+| **Representar** | Dibuja las columnas que elijas **sin ajustar nada**: puntos x-y (cada serie con su incertidumbre, su eje y izquierdo o derecho, su estilo y su color, y el eje x partido si hace falta), histograma, barras, sectores, cajas / violín o polar. Ver [Representar datos](#representar-datos-sin-ajustar). |
 | **Ajuste** | Ajusta un modelo del catálogo o una expresión propia. Tiene una tabla de parámetros con valor inicial, casilla *Fijo* y límites mín/máx, y una vista previa con los valores iniciales. Debajo están *Resumen* (veredicto, χ²/ν, p-valor, R²), *Informe* (texto y LaTeX) y *Evaluar* (f(x) ± σ, y la x que da un y₀ ± σ). |
 | **Selección de modelo** | Prueba los 20 modelos automáticos (más los que añadas) y los ordena por AICc o BIC: ★ recomendado, ✓ compatible, ✗ incompatible. La columna *Ver* superpone hasta tres modelos en la gráfica para compararlos. Con doble clic, el modelo pasa a *Ajuste*. |
 | **Interpolación** | Construye el interpolante y calcula f(x), f′(x), la x tal que f(x) = y₀ e integrales, con error por Monte Carlo. Exporta los tramos. |
@@ -277,6 +282,57 @@ escalas muy distintas, la segunda pasa al eje derecho. Todo se cambia en la tabl
 
 Clic en un punto excluye su fila (afecta también a los ajustes). La escala logarítmica del eje
 derecho está en *log y dcho.* y su etiqueta, en *Personalizar*.
+
+El selector **Tipo** cambia entre puntos x-y y los demás tipos de gráfica. Cada tipo recuerda su
+configuración, y todo se guarda en la sesión.
+
+#### Eje x partido
+
+![Dos tandas de medidas con el eje x partido](docs/capturas/eje_partido_claro.png)
+
+Cuando hay un tramo de x sin datos (dos tandas de medidas separadas, o un conjunto de en medio que
+has borrado), el botón **Cortes** del panel lo quita y la gráfica se acorta: el eje se parte en tramos
+con la misma escala, separados por `//`. Hay tres formas:
+
+- **Cortar los huecos grandes**: detecta los saltos de x mucho mayores que el paso típico (más de 6
+  veces y más del 12 % del rango).
+- **Elegir el tramo en la gráfica**: activa la herramienta **Cortar** y arrastra en horizontal sobre lo que sobra.
+- **Escribir el tramo**: `12; 45` quita lo que hay entre 12 y 45.
+
+Los puntos que caen en un corte no se dibujan ni se exportan (siguen en la tabla). Funciona con los dos
+ejes y, con paneles apilados y con escala logarítmica. Cada corte se quita desde el mismo menú.
+
+#### Histograma
+
+![Histograma de dos grupos de medidas con su ajuste gaussiano](docs/capturas/histograma_claro.png)
+
+- **Columnas**: una o varias. Con varias se usan los mismos intervalos (calculados con todos los datos)
+  y se dibujan como contornos para que se vean todas.
+- **Intervalos**: *Freedman–Diaconis* (la de por defecto, robusta frente a colas y valores atípicos),
+  *Scott*, *Sturges*, *√n*, número fijo o anchura fija. Con datos enteros (cuentas), los intervalos se
+  centran en los enteros.
+- **Altura**: cuentas, frecuencia relativa o densidad de probabilidad (área 1). **Errores √N** (Poisson).
+- **Ajustar** una normal (μ, σ), una Poisson (λ) o una exponencial (τ) por máxima verosimilitud, con el
+  test χ² de Pearson. A la derecha salen la estadística de cada columna (media ± error, desviación
+  típica, mediana, cuartiles, asimetría, curtosis) y el resultado del ajuste. Ver
+  [Histogramas](#histogramas) en la base estadística.
+
+Al pasar el ratón por un intervalo se ven sus límites, N ± √N y las entradas esperadas por el ajuste.
+
+#### Barras, sectores, cajas y polar
+
+![Barras, sectores, cajas con violín y gráfica polar](docs/capturas/tipos_claro.png)
+
+| Tipo | Qué dibuja |
+|---|---|
+| **Barras** | Una barra por fila. Las categorías salen de una columna de texto, de números o del número de fila. Una o varias series (barras agrupadas) con su incertidumbre; verticales u horizontales, en el orden de la tabla o de mayor a menor, con el valor encima si quieres. |
+| **Sectores** | Una columna de valores (≥ 0) con sus etiquetas, en anillo (con el total en el centro) o tarta. Van de mayor a menor desde las 12 en sentido horario; los menores del umbral (3 % por defecto) se juntan en «Otros» y como mucho hay 8. *Ver como barras ordenadas* pasa los mismos datos a barras, que se comparan mejor. |
+| **Cajas / violín** | Una caja por columna: mediana, cuartiles y bigotes de Tukey (1.5·IQR). Con violín se ve además la forma de la distribución; con *Puntos*, todos los datos; ◆ es la media. Al pasar el ratón salen n, media ± error, mediana, cuartiles y atípicos. |
+| **Polar** | Ángulo θ (en grados o radianes) y una o varias series de radios, con 0 a la derecha y sentido antihorario (convenio matemático) o 0 arriba y sentido horario (brújula). |
+
+Las filas excluidas no cuentan en histogramas, barras, sectores ni cajas; en x-y y polar se ven huecas.
+En todos los tipos, *Exportar gráfica* guarda la figura y los números dibujados en CSV (intervalos y
+cuentas, valores de las barras, estadísticos de las cajas…).
 
 ### Trabajar sobre la gráfica
 
@@ -380,6 +436,10 @@ En macOS, Ctrl equivale a ⌘. La lista también está en *Ayuda → Atajos de t
 
 Las filas con huecos en las columnas usadas se ignoran y el programa avisa de cuántas son.
 
+Una **columna de etiquetas** (texto: `Cu`, `Muestra 1`, `2026-01-05`…) junto a columnas de números se lee
+como texto en vez de rechazar el fichero; sirve para las categorías de las barras y los sectores. En la
+tabla también se puede escribir o pegar texto. Las columnas de texto no aparecen en x, y, σx ni σy.
+
 ### Asignación de columnas
 
 Si no indicas nada:
@@ -445,6 +505,19 @@ print(corte.resumen())
 
 Para redondear cualquier resultado: `formatear(3.14159, 0.0234)` → `"3.142 ± 0.023"`.
 
+Histogramas con su estadística:
+
+```python
+from ajustelab.histograma import ajustar_distribucion, histograma, resumen
+
+h = histograma(medidas)                    # Freedman–Diaconis; también "scott", "sturges", "raiz",
+                                           # intervalos=20 o ancho=0.5
+y, dy = h.valores("densidad")              # alturas y errores √N en la normalización pedida
+a = ajustar_distribucion(medidas, "normal", h)
+print(a.texto())                           # μ ± σ_μ, σ ± σ_σ, χ², ν y p
+print(resumen(medidas).filas())            # media ± error, mediana, cuartiles…
+```
+
 En `ejemplos/` hay tres demos ejecutables (`demo_fase1.py`, `demo_fase2.py`, `demo_fase3.py`) y
 tres ficheros de datos sintéticos en formatos distintos.
 
@@ -505,6 +578,23 @@ Elegir el modelo con menor χ² **siempre favorece al que tiene más parámetros
 
 > **La recomendación es estadística, no física.** Si la teoría predice un modelo, usa ese. En la
 > validación (abajo), los fallos son siempre un modelo con un parámetro de más que absorbe ruido.
+
+### Histogramas
+
+- **Intervalos**: Freedman–Diaconis, $h=2\,\mathrm{IQR}\,n^{-1/3}$; Scott, $h=3.49\,s\,n^{-1/3}$;
+  Sturges, $k=\lceil\log_2 n\rceil+1$ (solo razonable con pocos datos normales); $\sqrt n$. Si el IQR
+  es 0 (muchos valores repetidos) se usa Sturges. Como mucho 500 intervalos.
+- **Errores**: $\sqrt N$ en cada intervalo. Con $N=0$ la barra es 0, lo que no significa que no haya
+  incertidumbre: ahí $\sqrt N$ deja de ser una buena aproximación.
+- **Ajuste** por máxima verosimilitud con los **datos sin agrupar** (no con el histograma, que pierde
+  información y depende de los intervalos): normal, $\hat\mu=\bar x\pm s/\sqrt n$ y
+  $\hat\sigma=s\pm s/\sqrt{2(n-1)}$; Poisson, $\hat\lambda=\bar x\pm\sqrt{\hat\lambda/n}$; exponencial,
+  $\hat\tau=\bar x\pm\hat\tau/\sqrt n$.
+- **Test χ² de Pearson**: los intervalos de los extremos se extienden hasta el final del soporte y se
+  agrupan intervalos vecinos hasta que cada grupo espera al menos 5 entradas;
+  $\nu=k-1-(\text{parámetros estimados})$. Al estimar con los datos sin agrupar el p-valor es algo
+  optimista (Chernoff–Lehmann), poco con muchos intervalos. En la validación, con datos que siguen la
+  distribución, $p<0.05$ sale en el 5 % de los casos para las tres distribuciones.
 
 ### Intersección
 
@@ -578,7 +668,7 @@ calibraciones sin ruido. Con datos ruidosos usa el *spline de suavizado* o, mejo
 
 ## Validación
 
-La batería de tests (`pytest`, más de 180 pruebas) comprueba, entre otras cosas:
+La batería de tests (`pytest`, más de 280 pruebas) comprueba, entre otras cosas:
 
 - **Frente a soluciones conocidas**: fórmulas cerradas de la recta ponderada, `numpy.polyfit`,
   `scipy.optimize.curve_fit`, la varianza efectiva para una recta (que es analítica), la
@@ -591,8 +681,12 @@ La batería de tests (`pytest`, más de 180 pruebas) comprueba, entre otras cosa
 - **Selección**: acierta el modelo verdadero en ≈ 95 % de los casos (23 familias, varias semillas).
 - **Intersección**: los pulls de x* e y* y su correlación coinciden con la covarianza calculada; la
   elipse del 68 % contiene el 68.3 % de los puntos simulados.
+- **Histogramas**: las reglas de intervalos coinciden con las de NumPy; los ajustes recuperan sus
+  parámetros y, con datos que siguen la distribución, el p-valor del test χ² es uniforme (p < 0.05 en
+  ≈ 5 % de 400 conjuntos) para la normal, la Poisson y la exponencial.
 - **Interfaz**: arranque, temas, apertura, ajuste, clic para excluir, selección con cancelación,
-  interpolación, intersección, pegado y exportación, todo sin pantalla.
+  interpolación, intersección, pegado, columnas de texto, todos los tipos de gráfica, eje partido y
+  exportación, todo sin pantalla.
 
 La CI de GitHub ejecuta los tests en **Ubuntu, Windows y macOS** con Python 3.10, 3.13 y 3.14.
 
@@ -610,17 +704,21 @@ Programa_Python/
 │   ├── seleccion.py       # selección automática de modelo
 │   ├── interpolacion.py   # splines, PCHIP, Akima, suavizado, Monte Carlo
 │   ├── interseccion.py    # corte de dos curvas con covarianza
+│   ├── histograma.py      # intervalos, errores √N, ajuste de distribuciones y test χ²
+│   ├── fuentes.py         # tipografía Inter (Qt y matplotlib)
 │   ├── cli.py             # ajustelab-cli
 │   ├── lanzador.py        # orden ajustelab: opciones de sistema y arranque de la interfaz
 │   ├── sistema.py         # diagnóstico: distro, sesión X11/Wayland, bibliotecas de Qt
 │   ├── escritorio.py      # menú de aplicaciones, icono y tipo de fichero (freedesktop y Windows)
 │   ├── windows.py         # acceso directo con AppUserModelID y asociación de .ajustelab
+│   ├── recursos/fuentes/  # Inter 4.1 (subconjunto latino, griego y matemático) y su licencia OFL
 │   └── gui/               # interfaz PySide6
 │       ├── app.py         #   ventana, menús, paneles acoplables, deshacer, sesiones
 │       ├── tabla.py       #   tabla editable (con deshacer) y asignación de columnas
 │       ├── grafica.py     #   gráfica, región/rango, cuadro de resultados
 │       ├── paneles.py     #   pestañas de análisis
-│       ├── representar.py #   pestaña Representar (series, dos ejes y)
+│       ├── representar.py #   pestaña Representar (tipo de gráfica, series, cortes del eje x)
+│       ├── graficas.py    #   histograma, barras, sectores, cajas / violín y polar
 │       ├── dialogos.py    #   personalizar y exportar gráfica (vista previa, formatos, CSV)
 │       ├── sesion.py      #   ficheros .ajustelab
 │       ├── tema.py, estilo.py, iconos.py, widgets.py, ejemplos.py, acerca.py, trabajos.py
@@ -718,3 +816,6 @@ El script original se conserva en `legacy/`. Tenía fallos que **afectan a los r
 
 [MIT](LICENSE) © 2026 Jorge del Río López (WetZap). Puedes usar, modificar y distribuir el código
 manteniendo la atribución.
+
+La tipografía [Inter](https://rsms.me/inter/) (© The Inter Project Authors) se distribuye con el programa
+bajo la [SIL Open Font License 1.1](ajustelab/recursos/fuentes/OFL-Inter.txt).

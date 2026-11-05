@@ -48,6 +48,47 @@ def _calibracion(rng):
     return pd.DataFrame({"T (°C)": T, "E (mV)": mV.round(4)})
 
 
+def _medidas(rng):
+    """Medidas repetidas: el periodo de un péndulo medido por dos grupos (con
+    distinto número de medidas) y las cuentas de un contador Geiger en 1 s."""
+    n_a, n_b, n_c = 60, 45, 80
+    filas = max(n_a, n_b, n_c)
+
+    def columna(v):
+        return np.r_[v, np.full(filas - v.size, np.nan)]
+
+    return pd.DataFrame({
+        "T grupo A (s)": columna(rng.normal(2.006, 0.025, n_a).round(3)),
+        "T grupo B (s)": columna(rng.normal(2.021, 0.045, n_b).round(3)),
+        "Cuentas en 1 s": columna(rng.poisson(4.2, n_c).astype(float)),
+    })
+
+
+def _composicion(rng):
+    """Composición de una aleación (fracción en masa) con su incertidumbre:
+    columna de etiquetas (texto) para barras y sectores."""
+    metales = ["Cu", "Zn", "Pb", "Sn", "Fe", "Ni"]
+    f = np.array([0.585, 0.352, 0.031, 0.018, 0.009, 0.005])
+    f = f * (1 + rng.normal(0, 0.01, f.size))
+    return pd.DataFrame({"Metal": metales, "Fracción": (f / f.sum()).round(4),
+                         "dF": np.maximum(0.002, 0.02 * f).round(4)})
+
+
+def _malus(rng):
+    """Ley de Malus: intensidad tras un polarizador frente al ángulo (polar)."""
+    th = np.arange(0, 360, 10.0)
+    I = 95 * np.cos(np.radians(th - 20)) ** 2 + 4
+    return pd.DataFrame({"θ (°)": th, "I (u.a.)": (I + rng.normal(0, 2, th.size)).round(1), "dI": 2.0})
+
+
+def _dos_tandas(rng):
+    """Enfriamiento medido en dos tandas separadas por una pausa: el eje x se
+    parte para no dejar un hueco vacío en medio de la gráfica."""
+    t = np.r_[np.arange(0, 12.5, 1.0), np.arange(60, 72.5, 1.0)]
+    T = 21 + 64 * np.exp(-t / 22) + rng.normal(0, 0.3, t.size)
+    return pd.DataFrame({"t (min)": t, "T (°C)": T.round(2), "dT": 0.3})
+
+
 EJEMPLOS = {
     "carga": ("Carga de un condensador: V e I frente a t (dos ejes)", _carga),
     "descarga": ("Descarga de un condensador (exponencial con fondo)", _descarga),
@@ -55,6 +96,10 @@ EJEMPLOS = {
     "pendulo": ("Péndulo amortiguado (oscilación)", _pendulo),
     "rectas": ("Dos tramos rectos (intersección, n = 8)", _rectas),
     "calibracion": ("Tabla de calibración (interpolación)", _calibracion),
+    "medidas": ("Medidas repetidas: histograma con ajuste gaussiano", _medidas),
+    "composicion": ("Composición de una aleación (barras y sectores)", _composicion),
+    "malus": ("Ley de Malus: intensidad frente al ángulo (polar)", _malus),
+    "dos_tandas": ("Enfriamiento en dos tandas (eje x partido)", _dos_tandas),
 }
 
 

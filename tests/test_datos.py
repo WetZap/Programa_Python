@@ -159,3 +159,40 @@ def test_validacion():
     d = Datos(X, Y, dx=[0.0, 0.1, 0.0])  # dx = 0 sí está permitido
     d.excluir(1)
     assert d.n == 2 and d.activos().n_total == 2
+
+
+# --- columnas de etiquetas (texto) ----------------------------------------------------
+def test_columna_de_etiquetas_con_coma_decimal():
+    df = leer_texto("Metal;Fracción;dF\nPb;0,25;0,01\nCu;0,40;0,02\nFe;0,35;0,01\n")
+    assert list(df.columns) == ["Metal", "Fracción", "dF"]
+    assert list(df["Metal"]) == ["Pb", "Cu", "Fe"] and df["Fracción"].tolist() == [0.25, 0.40, 0.35]
+    sin_cabecera = leer_texto("Pb;0,25\nCu;0,40\nFe;0,35\n")
+    assert list(sin_cabecera.iloc[:, 0]) == ["Pb", "Cu", "Fe"]
+    d = a_datos(df)  # las etiquetas no entran en el reparto automático de x, y, σ
+    assert d.nombre_x == "Fracción" and d.nombre_y == "dF"
+    with pytest.raises(ErrorDatos, match="texto"):
+        a_datos(df, "Metal", "Fracción")
+
+
+def test_etiquetas_con_espacios_y_fechas():
+    df = leer_texto("Muestra,Fecha,T\nM 1,2026-01-05,20.1\nM 2,2026-01-06,21.3\nM 3,2026-01-07,19.8\n")
+    assert list(df["Muestra"]) == ["M 1", "M 2", "M 3"] and df["Fecha"].iloc[0] == "2026-01-05"
+    assert df["T"].dtype == float
+
+
+def test_ficheros_numericos_se_leen_igual():
+    """La lectura con etiquetas solo gana si lee más filas: «0,2;4,5» no se parte por la coma."""
+    df = leer_texto("t;V\n0,2000;4,5634\n0,5867;3,7189\n0,9733;2,9903\n")
+    assert list(df.columns) == ["t", "V"] and df["V"].tolist() == [4.5634, 3.7189, 2.9903]
+
+
+def test_hoja_y_json_con_etiquetas(tmp_path):
+    original = pd.DataFrame({"Grupo": ["A", "B", "C"], "valor": [1.5, 2.5, 3.5]})
+    ruta = tmp_path / "grupos.xlsx"
+    original.to_excel(ruta, index=False)
+    df = leer_tabla(ruta)
+    assert list(df["Grupo"]) == ["A", "B", "C"] and df["valor"].tolist() == [1.5, 2.5, 3.5]
+    ruta = tmp_path / "grupos.json"
+    original.to_json(ruta, orient="columns")
+    df = leer_tabla(ruta)
+    assert list(df["Grupo"]) == ["A", "B", "C"] and df["valor"].tolist() == [1.5, 2.5, 3.5]
