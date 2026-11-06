@@ -34,7 +34,7 @@ from .grafica import Escena, Grafica, con_coma  # noqa: E402
 from .iconos import icono, icono_aplicacion  # noqa: E402
 from .paneles import PanelAjuste, PanelInterpolacion, PanelInterseccion, PanelSeleccion  # noqa: E402
 from .representar import PanelRepresentar  # noqa: E402
-from .tabla import PanelDatos  # noqa: E402
+from .tabla import NINGUNA, PanelDatos  # noqa: E402
 from .tema import GestorTema  # noqa: E402
 from .trabajos import Trabajo  # noqa: E402
 from .widgets import Bienvenida, Notificador  # noqa: E402
@@ -72,6 +72,9 @@ def _describir(df) -> str:
 class VentanaPrincipal(QMainWindow):
     def __init__(self, tema: GestorTema):
         super().__init__()
+        from .. import fuentes
+
+        fuentes.registrar_matplotlib()  # Inter en las gráficas (y en sus fórmulas)
         self.tema = tema
         self.ajustes = QSettings()
         self._trabajos: dict[str, Trabajo] = {}
@@ -140,6 +143,7 @@ class VentanaPrincipal(QMainWindow):
         self.grafica.puntoClicado.connect(self.panel_datos.alternar_fila)
         self.grafica.regionSeleccionada.connect(self.panel_datos.modelo.alternar_varias)
         self.grafica.rangoSeleccionado.connect(lambda lo, hi: self.panel_datos.modelo.fijar_rango((lo, hi)))
+        self.grafica.corteSeleccionado.connect(lambda lo, hi: self.p_repr.anadir_corte(lo, hi))
         self.grafica.personalizar.connect(self.personalizar_grafica)
         self.pestanas.currentChanged.connect(lambda _: self.actualizar_grafica())
         self.pila.cleanChanged.connect(lambda limpio: self.setWindowModified(not limpio))
@@ -537,14 +541,38 @@ class VentanaPrincipal(QMainWindow):
         self.cargar_tabla(df, descripcion)
         sugerencia = {"descarga": (self.p_ajuste, "exponencial_fondo"), "pico": (self.p_seleccion, None),
                       "pendulo": (self.p_ajuste, "seno_amortiguado"), "rectas": (self.p_inter, None),
-                      "calibracion": (self.p_interp, None), "carga": (self.p_repr, None)}[clave]
-        self.pestanas.setCurrentWidget(sugerencia[0])
-        if sugerencia[1]:
-            self.p_ajuste.selector.seleccionar_clave(sugerencia[1])
+                      "calibracion": (self.p_interp, None), "carga": (self.p_repr, "xy"),
+                      "medidas": (self.p_repr, "histograma"), "composicion": (self.p_repr, "barras"),
+                      "malus": (self.p_repr, "polar"), "dos_tandas": (self.p_repr, "xy")}[clave]
+        panel, opcion = sugerencia
+        if panel is self.p_repr:
+            self.p_repr._sincronizar_columnas()  # propone las series de la tabla nueva
+            e = self.p_repr.estado()
+            e["tipo"] = opcion
+            def serie(columna, k, dy=NINGUNA):
+                return {"ver": True, "y": columna, "dy": dy, "eje": "izq", "estilo": "puntos", "color": None,
+                        "indice": k}
+
+            if clave == "medidas":  # los dos grupos, con los mismos intervalos
+                grupos = [serie("T grupo A (s)", 0), serie("T grupo B (s)", 1)]
+                e["histograma"] = {**e["histograma"], "ajuste": "normal", "series": grupos}
+                e["cajas"] = {**e["cajas"], "series": grupos}
+            if clave == "composicion":
+                e["barras_cfg"] = {**e["barras_cfg"], "orden": "desc", "series": [serie("Fracción", 0, "dF")]}
+            self.p_repr.configurar(e)
+            if clave == "dos_tandas":
+                self.p_repr.cortar_huecos()
+        self.pestanas.setCurrentWidget(panel)
+        if panel is self.p_ajuste and opcion:
+            self.p_ajuste.selector.seleccionar_clave(opcion)
         if clave == "rectas":
             self.p_inter.n.setValue(8)
-        pista = ("prueba «Paneles apilados» o quita las barras de error" if clave == "carga"
-                 else "pulsa Ctrl+Intro para calcular")
+        pista = {"carga": "prueba «Paneles apilados» o quita las barras de error",
+                 "medidas": "cambia la columna, los intervalos o la distribución; prueba también «Cajas / violín»",
+                 "composicion": "prueba «Sectores» con las mismas columnas",
+                 "malus": "pasa el ratón por los puntos",
+                 "dos_tandas": "el eje x se ha partido en el hueco; «Cortes» para quitarlo o añadir otros"}.get(
+            clave, "pulsa Ctrl+Intro para calcular")
         self.notificar(f"{ejemplos.nombres()[clave]} — {pista}.", "neutro")
 
     def pegar_tabla_nueva(self) -> None:
@@ -698,7 +726,7 @@ class VentanaPrincipal(QMainWindow):
     def exportar_tabla(self) -> None:
         ruta, _ = QFileDialog.getSaveFileName(self, "Exportar tabla", "datos.csv", "CSV (*.csv)")
         if ruta:
-            self.panel_datos.modelo.a_dataframe().to_csv(ruta, index=False)
+            self.panel_datos.modelo.a_dataframe(con_texto=True).to_csv(ruta, index=False)
             self.notificar(f"Tabla guardada en {ruta}", "bueno")
 
     # ---------------------------------------------------------- disposición
@@ -786,6 +814,9 @@ def crear_aplicacion(argv: list[str]) -> QApplication:
     app.setApplicationVersion(__version__)
     QGuiApplication.setDesktopFileName("ajustelab")
     app.setWindowIcon(icono_aplicacion())
+    from .. import fuentes
+
+    fuentes.registrar_qt(app)  # Inter en toda la interfaz
     return app
 
 

@@ -32,14 +32,15 @@ def _limpio(v):
 
 def a_dict(ventana) -> dict:
     m = ventana.panel_datos.modelo
-    df = m.a_dataframe()
+    df = m.a_dataframe(con_texto=True)
     return {
         "formato": FORMATO,
         "version": VERSION,
         "ajustelab": __version__,
         "origen": str(ventana._ruta_datos) if getattr(ventana, "_ruta_datos", None) else None,
         "tabla": {"columnas": list(df.columns),
-                  "valores": [[_limpio(float(v)) for v in fila] for fila in df.to_numpy(dtype=float)]},
+                  "valores": [[v if isinstance(v, str) else _limpio(float(v)) for v in fila]
+                              for fila in df.to_numpy(dtype=object)]},
         "asignacion": ventana.panel_datos.asignacion(),
         "excluidas": sorted(int(f) for f in m.excluidas),
         "rango_x": list(m.rango_x) if m.rango_x is not None else None,
@@ -74,7 +75,7 @@ def restaurar(ventana, d: dict) -> None:
     from .grafica import OpcionesGrafica
 
     t = d["tabla"]
-    valores = np.array([[np.nan if v is None else v for v in fila] for fila in t["valores"]], dtype=float)
+    valores = np.array([[np.nan if v is None else v for v in fila] for fila in t["valores"]], dtype=object)
     df = pd.DataFrame(valores.reshape(len(t["valores"]), len(t["columnas"])), columns=t["columnas"])
     ventana.cargar_tabla(df, "Sesión restaurada" + (f" (datos de {Path(d['origen']).name})" if d.get("origen") else ""))
     pd_ = ventana.panel_datos

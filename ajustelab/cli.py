@@ -45,6 +45,10 @@ def _figura(ruta: str, datos, resultado=None, interp=None, nivel: float = 0.6827
     matplotlib.use("Agg")
     from matplotlib.figure import Figure
 
+    from . import fuentes
+
+    fuentes.registrar_matplotlib()
+
     azul, naranja, aqua = "#2a78d6", "#eb6834", "#1baf7a"
     fig = Figure(figsize=(8, 6) if resultado is not None else (8, 4.8), layout="constrained")
     if resultado is not None:

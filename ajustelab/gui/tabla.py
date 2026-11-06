@@ -32,6 +32,24 @@ def _a_float(texto: str) -> float:
     return float(t)
 
 
+def _valor_celda(texto) -> tuple[float, str | None]:
+    """(número, texto): un número va a la parte numérica; cualquier otra cosa no
+    vacía se guarda como texto (etiquetas para barras, sectores…)."""
+    if texto is None or (isinstance(texto, float) and np.isnan(texto)):
+        return np.nan, None
+    if isinstance(texto, (int, float, np.number)) and not isinstance(texto, bool):
+        return float(texto), None
+    t = str(texto).strip()
+    try:
+        return _a_float(t), None
+    except ValueError:
+        return np.nan, (t or None)
+
+
+def _vacio_texto(filas: int, columnas: int) -> np.ndarray:
+    return np.full((filas, columnas), None, dtype=object)
+
+
 class _CambioDatos(QUndoCommand):
     """Paso de deshacer: instantánea completa antes y después del cambio."""
 
@@ -56,6 +74,7 @@ class ModeloTabla(QAbstractTableModel):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._v = np.empty((0, 0))
+        self._t = _vacio_texto(0, 0)  # texto de las celdas que no son números (None si no hay)
         self._nombres: list[str] = []
         self.excluidas: set[int] = set()
         self.rango_x: tuple[float, float] | None = None
@@ -64,12 +83,13 @@ class ModeloTabla(QAbstractTableModel):
 
     # -- deshacer/rehacer ---------------------------------------------------
     def estado(self) -> dict:
-        return {"v": self._v.copy(), "nombres": list(self._nombres), "excluidas": set(self.excluidas),
-                "rango": self.rango_x}
+        return {"v": self._v.copy(), "t": self._t.copy(), "nombres": list(self._nombres),
+                "excluidas": set(self.excluidas), "rango": self.rango_x}
 
     def restaurar(self, e: dict) -> None:
         self.beginResetModel()
         self._v = e["v"].copy()
+        self._t = e["t"].copy() if "t" in e else _vacio_texto(*self._v.shape)
         self._nombres = list(e["nombres"])
         self.excluidas = set(e["excluidas"])
         rango_previo, self.rango_x = self.rango_x, e["rango"]
@@ -80,6 +100,7 @@ class ModeloTabla(QAbstractTableModel):
     @staticmethod
     def _iguales(a: dict, b: dict) -> bool:
         return (a["v"].shape == b["v"].shape and np.array_equal(a["v"], b["v"], equal_nan=True)
+                and a["t"].shape == b["t"].shape and bool(np.all(a["t"] == b["t"]))
                 and a["nombres"] == b["nombres"] and a["excluidas"] == b["excluidas"] and a["rango"] == b["rango"])
 
     def _registrar(self, texto: str, cambio) -> None:
@@ -93,7 +114,12 @@ class ModeloTabla(QAbstractTableModel):
     def cargar(self, df: pd.DataFrame) -> None:
         """Contenido nuevo (abrir fichero): no se puede deshacer y vacía la pila."""
         self.beginResetModel()
-        self._v = df.to_numpy(dtype=float, na_value=np.nan).copy()
+        celdas = [[_valor_celda(v) for v in fila] for fila in df.itertuples(index=False, name=None)]
+        self._v = np.array([[c[0] for c in fila] for fila in celdas], dtype=float).reshape(df.shape)
+        self._t = _vacio_texto(*df.shape)
+        for i, fila in enumerate(celdas):
+            for j, (_, texto) in enumerate(fila):
+                self._t[i, j] = texto
         self._nombres = [str(c) for c in df.columns]
         self.excluidas = set()
         self.rango_x = None
@@ -106,8 +132,32 @@ class ModeloTabla(QAbstractTableModel):
         self.cargar(pd.DataFrame(np.full((filas, columnas), np.nan), columns=["x", "y", "dx", "dy"][:columnas]
                                  + [f"col{i + 1}" for i in range(4, columnas)]))
 
-    def a_dataframe(self) -> pd.DataFrame:
-        return pd.DataFrame(self._v.copy(), columns=list(self._nombres))
+    def a_dataframe(self, con_texto: bool = False) -> pd.DataFrame:
+        """Los números (el texto queda como NaN), que es lo que usan los ajustes.
+        Con ``con_texto``, las columnas que tienen texto lo conservan."""
+        df = pd.DataFrame(self._v.copy(), columns=list(self._nombres))
+        if con_texto:
+            for j in range(self._t.shape[1]):
+                hay = np.array([t is not None for t in self._t[:, j]], dtype=bool)
+                if hay.any():
+                    col = df.iloc[:, j].astype(object)
+                    col[hay] = self._t[hay, j]
+                    df.isetitem(j, col)
+        return df
+
+    def etiquetas(self, columna: str) -> list[str]:
+        """Contenido de una columna como texto (para categorías y sectores)."""
+        j = self._nombres.index(columna)
+        return [t if t is not None else ("" if np.isnan(v) else f"{v:.10g}")
+                for v, t in zip(self._v[:, j], self._t[:, j])]
+
+    def columnas_texto(self) -> list[str]:
+        return [n for j, n in enumerate(self._nombres) if any(t is not None for t in self._t[:, j])]
+
+    def columnas_numericas(self) -> list[str]:
+        """Columnas con algún número (las de solo texto no sirven para ajustar)."""
+        return [n for j, n in enumerate(self._nombres) if np.isfinite(self._v[:, j]).any()
+                or not any(t is not None for t in self._t[:, j])]
 
     @property
     def nombres(self) -> list[str]:
@@ -130,12 +180,15 @@ class ModeloTabla(QAbstractTableModel):
         if not index.isValid():
             return None
         v = self._v[index.row(), index.column()]
+        texto = self._t[index.row(), index.column()]
         excluida = index.row() in self.excluidas
         fuera = self.fuera_de_rango(index.row())
         if rol in (Qt.DisplayRole, Qt.EditRole):
+            if texto is not None:
+                return texto
             return "" if np.isnan(v) else f"{v:.10g}"
-        if rol == Qt.TextAlignmentRole:
-            return Qt.AlignRight | Qt.AlignVCenter
+        if rol == Qt.TextAlignmentRole:  # números a la derecha, texto a la izquierda
+            return (Qt.AlignLeft if texto is not None else Qt.AlignRight) | Qt.AlignVCenter
         if rol == Qt.ForegroundRole and (excluida or fuera):
             return QGuiApplication.palette().brush(QPalette.PlaceholderText)
         if rol == Qt.FontRole and excluida:
@@ -162,16 +215,15 @@ class ModeloTabla(QAbstractTableModel):
     def setData(self, index, valor, rol=Qt.EditRole):
         if rol != Qt.EditRole or not index.isValid():
             return False
-        try:
-            nuevo = _a_float(valor)
-        except ValueError:
-            return False
-        actual = self._v[index.row(), index.column()]
-        if nuevo == actual or (np.isnan(nuevo) and np.isnan(actual)):
+        nuevo, texto = _valor_celda(valor)
+        r, c = index.row(), index.column()
+        actual, texto_actual = self._v[r, c], self._t[r, c]
+        if texto == texto_actual and (nuevo == actual or (np.isnan(nuevo) and np.isnan(actual))):
             return True
 
         def cambio():
-            self._v[index.row(), index.column()] = nuevo
+            self._v[r, c] = nuevo
+            self._t[r, c] = texto
 
         self._registrar("editar celda", cambio)
         self.dataChanged.emit(index, index)
@@ -190,6 +242,7 @@ class ModeloTabla(QAbstractTableModel):
         def cambio():
             self.beginInsertRows(QModelIndex(), r, r + n - 1)
             self._v = np.vstack([self._v, np.full((n, self._v.shape[1]), np.nan)])
+            self._t = np.vstack([self._t, _vacio_texto(n, self._t.shape[1])])
             self.endInsertRows()
 
         self._registrar("añadir fila", cambio)
@@ -203,12 +256,20 @@ class ModeloTabla(QAbstractTableModel):
             quedan = np.setdiff1d(np.arange(self._v.shape[0]), filas)
             nuevo_indice = {int(old): i for i, old in enumerate(quedan)}
             self._v = self._v[quedan]
+            self._t = self._t[quedan]
             self.excluidas = {nuevo_indice[f] for f in self.excluidas if f in nuevo_indice}
             self.endResetModel()
 
         self._registrar(f"borrar {len(filas)} fila{'s' if len(filas) > 1 else ''}", cambio)
 
-    def pegar_bloque(self, fila: int, col: int, bloque: np.ndarray) -> None:
+    def pegar_bloque(self, fila: int, col: int, bloque) -> None:
+        """Pega un bloque (números o texto) a partir de la celda (fila, col)."""
+        bloque = np.asarray(bloque, dtype=object)
+        valores = np.empty(bloque.shape, dtype=float)
+        textos = _vacio_texto(*bloque.shape)
+        for i, j in np.ndindex(bloque.shape):
+            valores[i, j], textos[i, j] = _valor_celda(bloque[i, j])
+
         def cambio():
             nf, nc = bloque.shape
             filas_nec = fila + nf - self._v.shape[0]
@@ -216,11 +277,14 @@ class ModeloTabla(QAbstractTableModel):
             self.beginResetModel()
             if filas_nec > 0:
                 self._v = np.vstack([self._v, np.full((filas_nec, self._v.shape[1]), np.nan)])
+                self._t = np.vstack([self._t, _vacio_texto(filas_nec, self._t.shape[1])])
             if cols_nec > 0:
                 self._v = np.hstack([self._v, np.full((self._v.shape[0], cols_nec), np.nan)])
+                self._t = np.hstack([self._t, _vacio_texto(self._t.shape[0], cols_nec)])
                 n0 = len(self._nombres)
                 self._nombres += [f"col{n0 + i + 1}" for i in range(cols_nec)]
-            self._v[fila:fila + nf, col:col + nc] = bloque
+            self._v[fila:fila + nf, col:col + nc] = valores
+            self._t[fila:fila + nf, col:col + nc] = textos
             self.endResetModel()
 
         self._registrar("pegar", cambio)
@@ -229,6 +293,7 @@ class ModeloTabla(QAbstractTableModel):
         def cambio():
             for ix in indices:
                 self._v[ix.row(), ix.column()] = np.nan
+                self._t[ix.row(), ix.column()] = None
             self.layoutChanged.emit()
 
         self._registrar("borrar celdas", cambio)
@@ -284,6 +349,9 @@ class VistaTabla(QTableView):
         self.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.horizontalHeader().sectionDoubleClicked.connect(self._renombrar)
         self.horizontalHeader().setToolTip("Doble clic para renombrar la columna")
+        from ..fuentes import con_cifras_tabulares
+
+        self.setFont(con_cifras_tabulares(QFont(self.font())))  # los números de una columna, alineados
 
     def _renombrar(self, columna: int) -> None:
         m: ModeloTabla = self.model()
@@ -316,14 +384,11 @@ class VistaTabla(QTableView):
         if not texto.strip():
             return
         try:
-            bloque = leer_texto(texto).to_numpy(dtype=float)
-        except ErrorDatos:
+            bloque = leer_texto(texto).to_numpy(dtype=object)
+        except ErrorDatos:  # celdas sueltas, también con texto: tal cual, separadas por tabuladores
             filas = [f.split("\t") for f in texto.strip("\n").splitlines()]
             ancho = max(len(f) for f in filas)
-            try:
-                bloque = np.array([[_a_float(v) for v in f] + [np.nan] * (ancho - len(f)) for f in filas])
-            except ValueError:
-                return
+            bloque = np.array([f + [""] * (ancho - len(f)) for f in filas], dtype=object)
         actual = self.currentIndex()
         fila, col = (actual.row(), actual.column()) if actual.isValid() else (0, 0)
         self.model().pegar_bloque(fila, col, bloque)
@@ -438,7 +503,7 @@ class PanelDatos(QWidget):
         self.datosCambiados.emit()
 
     def _rellenar_combos(self, asignacion: dict | None = None, conservar: bool = False) -> None:
-        cols = self.modelo.nombres
+        cols = self.modelo.columnas_numericas()  # las de solo texto no sirven para ajustar
         previo = {k: c.currentText() for k, c in self.combos.items()}
         for k, combo in self.combos.items():
             combo.blockSignals(True)

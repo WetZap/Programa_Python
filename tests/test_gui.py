@@ -104,7 +104,9 @@ def test_bienvenida_y_ejemplos(app, ventana):
         ventana.abrir_ejemplo(clave)
         esperar(app, ventana, 5)
         assert ventana.centro.currentWidget() is ventana.grafica
-        assert ventana.obtener_datos(silencioso=True) is not None
+        assert not ventana.grafica.escena.vacia
+        if ventana.pestanas.currentWidget() is not ventana.p_repr or ventana.p_repr.tipo.currentData() == "xy":
+            assert ventana.obtener_datos(silencioso=True) is not None
     ventana.nueva_sesion()
     assert ventana.centro.currentWidget() is ventana.bienvenida
 
@@ -619,3 +621,284 @@ def test_exportar_de_principio_a_fin(app, ventana, tmp_path, monkeypatch):
     ventana.copiar_grafica()
     mime = QGuiApplication.clipboard().mimeData()
     assert mime.hasImage() and mime.hasFormat("image/svg+xml") and b"<svg" in bytes(mime.data("image/svg+xml"))
+
+
+@pytest.mark.parametrize("cierre", ["aboutToQuit", "fin_de_python"])
+def test_copiar_grafica_y_salir_sin_error(cierre):
+    """PySide6 se caía al salir si el portapapeles guardaba nuestro QMimeData (PNG + SVG)."""
+    import subprocess
+    import sys
+
+    codigo = f"""
+from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import QApplication
+from ajustelab.gui.dialogos import copiar_figura, renderizar
+from ajustelab.gui.grafica import COLORES_PUBLICACION, Escena, OpcionesGrafica, SerieDibujo
+import numpy as np
+app = QApplication([])
+s = SerieDibujo("y", np.arange(5.0), np.arange(5.0) ** 2)
+copiar_figura(renderizar(Escena(series=[s], nombre_x="x"), OpcionesGrafica(), COLORES_PUBLICACION, False, 8, 6))
+assert app.clipboard().mimeData().hasFormat("image/svg+xml")
+if {cierre!r} == "aboutToQuit":
+    QTimer.singleShot(50, app.quit)
+    app.exec()
+    assert not app.clipboard().image().isNull()  # la imagen sigue en el portapapeles
+print("ok")
+"""
+    entorno = {**os.environ, "QT_QPA_PLATFORM": "offscreen"}
+    r = subprocess.run([sys.executable, "-c", codigo], capture_output=True, text=True, env=entorno, timeout=120)
+    assert r.returncode == 0 and "ok" in r.stdout, r.stderr[-2000:]
+
+
+# --- columnas de texto (etiquetas) -------------------------------------------------
+def test_tabla_columnas_de_texto(app, ventana, tmp_path, monkeypatch):
+    m = ventana.panel_datos.modelo
+    QGuiApplication.clipboard().setText("Metal;Fracción;dF\nPb;0,25;0,01\nCu;0,40;0,02\nFe;0,35;0,01\n")
+    ventana.pegar_tabla_nueva()
+    esperar(app, ventana)
+    assert m.nombres == ["Metal", "Fracción", "dF"]
+    assert m.columnas_texto() == ["Metal"] and m.columnas_numericas() == ["Fracción", "dF"]
+    assert m.etiquetas("Metal") == ["Pb", "Cu", "Fe"]
+    assert m.data(m.index(1, 0)) == "Cu" and np.isnan(m.a_dataframe().iloc[1, 0])
+    assert list(m.a_dataframe(con_texto=True)["Metal"]) == ["Pb", "Cu", "Fe"]
+    # los desplegables de x/y solo ofrecen columnas numéricas
+    combo = ventana.panel_datos.combos["x"]
+    assert [combo.itemText(i) for i in range(combo.count())][:2] == ["Fracción", "dF"]
+    # editar: texto donde había texto, número donde había número; deshacer
+    assert m.setData(m.index(2, 0), "Zn") and m.etiquetas("Metal")[2] == "Zn"
+    assert m.setData(m.index(0, 1), "abc") and m.data(m.index(0, 1)) == "abc"
+    ventana.pila.undo()
+    ventana.pila.undo()
+    assert m.etiquetas("Metal") == ["Pb", "Cu", "Fe"] and m.a_dataframe().iloc[0, 1] == 0.25
+    # pegar un bloque con texto y borrar celdas
+    QGuiApplication.clipboard().setText("Ag\t0,5\nAu\t0,6")
+    ventana.panel_datos.vista.setCurrentIndex(m.index(1, 0))
+    ventana.panel_datos.vista.pegar()
+    assert m.etiquetas("Metal")[:3] == ["Pb", "Ag", "Au"] and np.isclose(m.a_dataframe().iloc[2, 1], 0.6)
+    ventana.pila.undo()
+    assert m.etiquetas("Metal") == ["Pb", "Cu", "Fe"]
+    # la sesión conserva el texto
+    ruta = tmp_path / "metales.ajustelab"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: (str(ruta), ""))
+    assert ventana.guardar_sesion()
+    ventana.nueva_sesion()
+    assert ventana.abrir(ruta)
+    esperar(app, ventana)
+    m = ventana.panel_datos.modelo
+    assert m.etiquetas("Metal") == ["Pb", "Cu", "Fe"] and np.allclose(m.a_dataframe()["Fracción"], [0.25, 0.40, 0.35])
+
+
+# --- tipos de gráfica y eje partido ----------------------------------------------
+def _evento(lienzo, ax, x, y, tipo="motion_notify_event", boton=None):
+    """MouseEvent en las coordenadas de datos (x, y) de los ejes ``ax``."""
+    from matplotlib.backend_bases import MouseEvent
+
+    px, py = ax.transData.transform((x, y))
+    ev = MouseEvent(tipo, lienzo, px, py, button=boton)
+    ev._process()
+    return ev
+
+
+def _etiqueta(g, ax, x, y):
+    g.lienzo.draw()
+    _evento(g.lienzo, ax, x, y)
+    return None if g._anotacion is None else g._anotacion.get_text()
+
+
+def test_histograma_desde_ejemplo(app, ventana):
+    from ajustelab.gui.graficas import Aviso, HistoGrafica
+
+    ventana.abrir_ejemplo("medidas")
+    esperar(app, ventana)
+    p, g = ventana.p_repr, ventana.grafica
+    assert p.tipo.currentData() == "histograma" and isinstance(g.escena.especial, HistoGrafica)
+    h = g.escena.especial
+    assert [c.nombre for c in h.columnas] == ["T grupo A (s)", "T grupo B (s)"]
+    assert np.array_equal(h.histogramas[0].bordes, h.histogramas[1].bordes)  # mismos intervalos
+    assert h.histogramas[0].n == 60 and h.histogramas[1].n == 45  # las celdas vacías no cuentan
+    assert all(a is not None and a.distribucion == "normal" for a in h.ajustes)
+    assert "μ = " in p.h_resultados.toPlainText() and "χ²" in p.h_resultados.toPlainText()
+    assert g.figura.axes[0].get_xlabel() == "Valor (s)"
+    assert not g.b_cortar.isVisible() and not g.b_region.isEnabled() and g.log_y.isEnabled()
+    # etiqueta al pasar por un intervalo
+    b = h.histogramas[0].bordes
+    i = int(np.argmax(h.histogramas[0].cuentas))
+    texto = _etiqueta(g, g.figura.axes[0], (b[i] + b[i + 1]) / 2, 0.5)
+    assert texto and texto.startswith("[") and "T grupo A (s): N = " in texto and "esperadas" in texto
+    # densidad: el área de cada histograma es 1
+    p.h_norm.setCurrentIndex(p.h_norm.findData("densidad"))
+    esperar(app, ventana, 5)
+    h = g.escena.especial
+    y, _ = h.histogramas[0].valores("densidad")
+    assert np.isclose(np.sum(y * h.histogramas[0].anchos), 1)
+    # número fijo de intervalos y anchura fija
+    p.h_regla.setCurrentIndex(p.h_regla.findData("numero"))
+    p.h_numero.setValue(7)
+    esperar(app, ventana, 5)
+    assert g.escena.especial.histogramas[0].cuentas.size == 7 and p.h_numero.isVisibleTo(p)
+    p.h_regla.setCurrentIndex(p.h_regla.findData("ancho"))
+    p.h_ancho.setText("abc")
+    p.h_ancho.editingFinished.emit()
+    esperar(app, ventana, 5)
+    assert isinstance(g.escena.especial, Aviso) and "anchura" in p.h_resultados.toPlainText()
+    p.h_ancho.setText("0,01")
+    p.h_ancho.editingFinished.emit()
+    esperar(app, ventana, 5)
+    assert np.allclose(g.escena.especial.histogramas[0].anchos, 0.01)
+    # excluir una fila la saca del histograma
+    ventana.panel_datos.alternar_fila(0)
+    esperar(app, ventana)
+    assert g.escena.especial.histogramas[0].n == 59
+    # Poisson con las cuentas
+    p.h_series.configurar([{"ver": True, "y": "Cuentas en 1 s", "dy": "", "indice": 2, "color": None}])
+    p.h_regla.setCurrentIndex(p.h_regla.findData("fd"))
+    p.h_ajuste.setCurrentIndex(p.h_ajuste.findData("poisson"))
+    esperar(app, ventana, 5)
+    h = g.escena.especial
+    assert h.histogramas[0].enteros and h.ajustes[0].discreta and "λ = " in p.h_resultados.toPlainText()
+
+
+def test_barras_sectores_y_cajas(app, ventana):
+    from ajustelab.gui.graficas import BarrasGrafica, CajasGrafica, CircularGrafica
+
+    ventana.abrir_ejemplo("composicion")
+    esperar(app, ventana)
+    p, g = ventana.p_repr, ventana.grafica
+    b = g.escena.especial
+    assert isinstance(b, BarrasGrafica) and b.categorias[:2] == ["Cu", "Zn"]  # de mayor a menor
+    assert b.series[0].errores is not None and np.all(np.diff(b.series[0].valores) <= 0)
+    ax = g.figura.axes[0]
+    texto = _etiqueta(g, ax, 0, b.series[0].valores[0] / 2)
+    assert texto and texto.startswith("Cu") and "Fracción = " in texto
+    # sectores
+    p.tipo.setCurrentIndex(p.tipo.findData("circular"))
+    esperar(app, ventana, 5)
+    c = g.escena.especial
+    assert isinstance(c, CircularGrafica) and c.etiquetas[0] == "Cu" and c.etiquetas[-1].startswith("Otros")
+    assert np.isclose(c.valores.sum(), 1, atol=1e-3)
+    g.lienzo.draw()
+    cuna = g.figura.axes[0].patches[0]  # Cu: el sector más grande, a la derecha
+    cx, cy = cuna.center
+    r = cuna.r - cuna.width / 2
+    ang = np.radians((cuna.theta1 + cuna.theta2) / 2)
+    texto = _etiqueta(g, g.figura.axes[0], cx + r * np.cos(ang), cy + r * np.sin(ang))
+    assert texto and texto.startswith("Cu") and "%" in texto
+    # con negativos, un aviso en lugar de la gráfica
+    m = ventana.panel_datos.modelo
+    m.setData(m.index(2, 1), "-0,1")
+    esperar(app, ventana)
+    assert "≥ 0" in g.escena.especial.texto
+    ventana.pila.undo()
+    esperar(app, ventana)
+    # «Ver como barras ordenadas»
+    p.circular_a_barras()
+    esperar(app, ventana, 5)
+    b = g.escena.especial
+    assert p.tipo.currentData() == "barras" and b.horizontal and b.categorias[0] == "Cu"
+    # cajas con el ejemplo de medidas
+    ventana.pila.setClean()
+    ventana.abrir_ejemplo("medidas")
+    esperar(app, ventana)
+    p.tipo.setCurrentIndex(p.tipo.findData("cajas"))
+    p.k_modo.setCurrentIndex(p.k_modo.findData("ambos"))
+    esperar(app, ventana, 5)
+    k = g.escena.especial
+    assert isinstance(k, CajasGrafica) and [x.nombre for x in k.grupos] == ["T grupo A (s)", "T grupo B (s)"]
+    mediana = float(np.median(k.grupos[0].valores))
+    texto = _etiqueta(g, g.figura.axes[0], 1.0, mediana)
+    assert texto and "mediana" in texto and "n = 60" in texto
+
+
+def test_polar(app, ventana):
+    from ajustelab.gui.graficas import PolarGrafica
+
+    ventana.abrir_ejemplo("malus")
+    esperar(app, ventana)
+    p, g = ventana.p_repr, ventana.grafica
+    pol = g.escena.especial
+    assert isinstance(pol, PolarGrafica) and pol.grados and np.isclose(pol.series[0].x[3], np.radians(30))
+    ax = g.figura.axes[0]
+    assert ax.name == "polar"
+    s = pol.series[0]
+    texto = _etiqueta(g, ax, s.x[2], s.y[2])
+    assert texto and "θ (°) = 20°" in texto and "fila 3" in texto
+    p.p_orientacion.setCurrentIndex(p.p_orientacion.findData("brujula"))
+    esperar(app, ventana, 5)
+    ax = g.figura.axes[0]
+    assert ax.get_theta_direction() == -1 and np.isclose(ax.get_theta_offset(), np.pi / 2)
+
+
+def test_eje_partido(app, ventana, tmp_path, monkeypatch):
+    from ajustelab.gui.dialogos import tablas_escena
+
+    ventana.abrir_ejemplo("dos_tandas")
+    esperar(app, ventana)
+    p, g = ventana.p_repr, ventana.grafica
+    assert p.cortes == [(12.0, 60.0)] and g.escena.cortes == [(12.0, 60.0)]
+    izq, der = g.figura.axes
+    assert izq.get_xlim()[1] < 13 and der.get_xlim()[0] > 59  # el hueco no se dibuja
+    assert not der.spines["left"].get_visible() and not izq.spines["right"].get_visible()
+    assert g.b_cortar.isVisible()
+    # el clic en un punto del segundo tramo excluye su fila
+    g.lienzo.draw()
+    s = g.escena.series[0]
+    j = int(np.flatnonzero(s.x == 62)[0])
+    _evento(g.lienzo, der, 62, s.y[j], "button_press_event", 1)
+    esperar(app, ventana)
+    assert ventana.panel_datos.modelo.excluidas == {int(s.filas[j])}
+    # cortar con la herramienta: arrastrar sobre el tramo 64–68 del segundo panel
+    g.b_cortar.setChecked(True)
+    g.lienzo.draw()
+    der = g.figura.axes[1]
+    yv = float(np.mean(der.get_ylim()))
+    _evento(g.lienzo, der, 64.2, yv, "button_press_event", 1)
+    _evento(g.lienzo, der, 66.5, yv, "motion_notify_event", 1)
+    _evento(g.lienzo, der, 67.8, yv, "button_release_event", 1)
+    esperar(app, ventana, 5)
+    assert len(p.cortes) == 2 and 64 < p.cortes[1][0] < p.cortes[1][1] < 68
+    assert len(g.figura.axes) == 3 and not g.b_cortar.isChecked()
+    # los datos exportados no incluyen lo que cae en un corte
+    df = tablas_escena(g.escena)["datos"]
+    assert not np.any((df["t (min)"] > 12) & (df["t (min)"] < 60)) and 65 not in df["t (min)"].to_numpy()
+    # en la sesión
+    ruta = tmp_path / "tandas.ajustelab"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: (str(ruta), ""))
+    assert ventana.guardar_sesion()
+    ventana.nueva_sesion()
+    assert ventana.abrir(ruta)
+    esperar(app, ventana)
+    assert len(p.cortes) == 2 and len(g.figura.axes) == 3
+    p.quitar_cortes()
+    esperar(app, ventana, 5)
+    assert len(g.figura.axes) == 1 and p.texto_cortes.text() == "ninguno"
+    assert p.cortar_huecos() == 1 and len(g.figura.axes) == 2
+
+
+def test_tipos_en_sesion_y_exportacion(app, ventana, tmp_path, monkeypatch):
+    from ajustelab.gui.dialogos import guardar_figura, guardar_tablas, renderizar
+    from ajustelab.gui.grafica import COLORES_PUBLICACION
+
+    ventana.abrir_ejemplo("medidas")
+    esperar(app, ventana)
+    p = ventana.p_repr
+    p.h_norm.setCurrentIndex(p.h_norm.findData("relativa"))
+    esperar(app, ventana, 5)
+    ruta = tmp_path / "medidas.ajustelab"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: (str(ruta), ""))
+    assert ventana.guardar_sesion()
+    ventana.nueva_sesion()
+    assert ventana.abrir(ruta)
+    esperar(app, ventana)
+    assert p.tipo.currentData() == "histograma" and p.h_norm.currentData() == "relativa"
+    assert p.h_ajuste.currentData() == "normal" and len(p.h_series.config()) == 2
+    # cada tipo se exporta (vectorial y CSV) con el mismo código que en pantalla
+    for tipo in ("histograma", "barras", "circular", "cajas", "polar", "xy"):
+        p.tipo.setCurrentIndex(p.tipo.findData(tipo))
+        esperar(app, ventana, 3)
+        e = ventana.grafica.escena
+        fig = renderizar(e, ventana.grafica.opciones, COLORES_PUBLICACION, False, 12, 8)
+        for ext in ("pdf", "svg"):
+            guardar_figura(fig, tmp_path / f"{tipo}.{ext}")
+            assert (tmp_path / f"{tipo}.{ext}").stat().st_size > 1000
+        rutas = guardar_tablas(e, tmp_path / f"{tipo}.png")
+        assert rutas and all(r.exists() and " " not in r.name for r in rutas)

@@ -8,7 +8,9 @@ en CSV (para rehacerla con pgfplots u otro programa).
 """
 from __future__ import annotations
 
+import atexit
 import io
+import re
 from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
@@ -23,7 +25,8 @@ from PySide6.QtGui import QColor, QGuiApplication, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFileDialog,
                                QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit, QSpinBox, QVBoxLayout)
 
-from .grafica import COLORES_PUBLICACION, Escena, OpcionesGrafica, _malla, dibujar
+from .grafica import (COLORES_PUBLICACION, Escena, OpcionesGrafica, _malla, dibujar, fuera_de_cortes,
+                      fusionar_cortes)
 
 # formato: (nombre en el diálogo, extensión, vectorial)
 FORMATOS = {
@@ -46,7 +49,7 @@ ANCHOS = {
 PROPORCIONES = {"4:3": 3 / 4, "3:2": 2 / 3, "Áurea (1,618 : 1)": 1 / 1.618, "16:9": 9 / 16, "1:1": 1.0,
                 "Libre": None}
 FUENTES = {
-    "sans": "Sans (DejaVu Sans, como en pantalla)",
+    "sans": "Sans (Inter, como en pantalla)",
     "serif": "Serif (STIX, tipo Times; fórmulas a juego)",
 }
 
@@ -166,18 +169,48 @@ def _bytes(fig: Figure, formato: str, dpi: int = 200, transparente: bool = False
     return buf.getvalue()
 
 
+_MARCA_PORTAPAPELES = "application/x-ajustelab-grafica"
+_soltar_registrado = False
+
+
+def _soltar_portapapeles() -> None:
+    """PySide6 (6.12) se cae al cerrar el programa si el portapapeles aún guarda un
+    QMimeData creado desde Python. Antes de salir, si lo que hay es nuestra
+    gráfica, se cambia por la misma imagen creada por Qt: sigue en el portapapeles
+    después de cerrar (solo se pierde la versión SVG)."""
+    if QGuiApplication.instance() is None:
+        return
+    try:
+        portapapeles = QGuiApplication.clipboard()
+        actual = portapapeles.mimeData()
+        if actual is not None and actual.hasFormat(_MARCA_PORTAPAPELES):
+            imagen = portapapeles.image()
+            if imagen.isNull():
+                portapapeles.clear()
+            else:
+                portapapeles.setImage(imagen)
+    except RuntimeError:  # objetos de Qt ya destruidos
+        pass
+
+
 def copiar_figura(fig: Figure, dpi: int = 200, transparente: bool = False) -> None:
     """Al portapapeles como imagen (PNG) y como SVG: los programas que entienden
     SVG (Inkscape, LibreOffice…) pegan la versión vectorial."""
+    global _soltar_registrado
     png = _bytes(fig, "png", dpi, transparente)
     mime = QMimeData()
     mime.setImageData(QImage.fromData(png, "PNG"))
     mime.setData("image/png", QByteArray(png))
+    mime.setData(_MARCA_PORTAPAPELES, QByteArray(b"1"))
     try:
         mime.setData("image/svg+xml", QByteArray(_bytes(fig, "svg", dpi, transparente)))
     except Exception:  # noqa: BLE001 — el SVG es un extra: si falla, queda la imagen
         pass
     QGuiApplication.clipboard().setMimeData(mime)
+    if not _soltar_registrado:  # al cerrar la ventana (aboutToQuit) o, si no, al salir de Python
+        _soltar_registrado = True
+        QGuiApplication.instance().aboutToQuit.connect(_soltar_portapapeles)
+        atexit.register(_soltar_portapapeles)
 
 
 # --- datos de la gráfica ---------------------------------------------------------
@@ -185,6 +218,8 @@ def tablas_escena(escena: Escena, n: int = 400) -> dict[str, pd.DataFrame]:
     """Los números que hay dibujados, como tablas: puntos, curvas y bandas."""
     t: dict[str, pd.DataFrame] = {}
     e = escena
+    if e.especial is not None:
+        return e.especial.tablas()
     if e.series:
         columnas = {}
         filas = sorted({int(f) for s in e.series if s.filas is not None for f in s.filas})
@@ -200,6 +235,8 @@ def tablas_escena(escena: Escena, n: int = 400) -> dict[str, pd.DataFrame]:
                 columnas[f"σ {e.nombre_x}"] = pd.Series(s.dx, index=idx)
         df = pd.DataFrame({e.nombre_x or "x": x, **columnas})
         df.index = pd.Index(df.index + 1, name="fila")  # filas como en la tabla (desde 1)
+        if e.cortes:  # lo que cae en un corte no está dibujado
+            df = df[fuera_de_cortes(df[e.nombre_x or "x"].to_numpy(float), fusionar_cortes(e.cortes))]
         t["datos"] = df.reset_index()
         return t
     if e.interseccion is not None:
@@ -246,6 +283,7 @@ def tablas_escena(escena: Escena, n: int = 400) -> dict[str, pd.DataFrame]:
 def guardar_tablas(escena: Escena, ruta_figura: Path) -> list[Path]:
     rutas = []
     for nombre, df in tablas_escena(escena).items():
+        nombre = re.sub(r"[^\w.-]+", "_", nombre).strip("_") or "datos"
         ruta = ruta_figura.with_name(f"{ruta_figura.stem}_{nombre}.csv")
         df.to_csv(ruta, index=False, encoding="utf-8")
         rutas.append(ruta)
