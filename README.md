@@ -67,6 +67,10 @@ o como **biblioteca de Python**.
 - **Interfaz cómoda**: vista previa del modelo, parámetros fijos y con límites, exclusión de puntos
   con un clic o por región, rango de ajuste arrastrando, deshacer/rehacer, comparación de modelos
   superpuestos, sesiones `.ajustelab`, exportación para publicación y coma decimal opcional.
+- **Gráficas a tu gusto**: el título, la leyenda, las etiquetas de los ejes y los textos se arrastran
+  sobre la gráfica; límites de los ejes, marcas hacia dentro y en los cuatro lados, notación
+  científica, leyenda fuera o en columnas, tamaños y colores, textos con flecha y **plantillas de
+  estilo** (de fábrica, como *Revista (física)*, o las tuyas).
 - **Tipografía Inter** en la interfaz y en las gráficas (incluida, no hace falta instalarla), con
   cifras tabulares en las tablas. **Tema claro/oscuro** que sigue al sistema y cálculos en segundo plano. Funciona en **Windows,
   macOS y Linux** (X11 y Wayland).
@@ -344,7 +348,31 @@ cuentas, valores de las barras, estadísticos de las cajas…).
   estorbe menos, y su posición se guarda.
 - **Bandas**: de confianza al 68 % o al 95 % (incertidumbre de la curva) o de predicción al 95 %
   (además, la dispersión de una medida nueva).
-- **Personalizar**: título y etiquetas (admiten LaTeX, p. ej. `$V_0$ (V)`), tamaño de letra, leyenda y rejilla.
+- **Mover y editar sobre la gráfica**: arrastra el **título**, la **leyenda**, las **etiquetas de los
+  ejes** o un **texto** a donde quieras (el cursor cambia al pasar por encima). **Doble clic** para
+  editarlos (en la leyenda, abre sus opciones). **Clic derecho** para añadir un texto en ese punto o una
+  flecha que lo señale, devolver un elemento a su sitio o restablecer todas las posiciones.
+- **Personalizar**: todas las opciones de la gráfica (ver abajo).
+
+#### Personalizar la gráfica
+
+| Gráfica personalizada (plantilla *Revista*, leyenda y cuadro movidos, texto con flecha) | Diálogo *Personalizar* |
+|---|---|
+| ![Gráfica con estilo de revista](docs/capturas/personalizada_claro.png) | ![Diálogo Personalizar, pestaña Ejes](docs/capturas/personalizar_claro.png) |
+
+| Pestaña | Opciones |
+|---|---|
+| **Textos** | Título (alineación, tamaño, negrita), etiquetas de los ejes (admiten LaTeX, p. ej. `$V_0$ (V)`), tamaño de letra y un botón para devolver a su sitio lo que hayas movido. |
+| **Ejes** | Límites de x, y e y derecho (vacío = automático), marcas hacia fuera, hacia dentro o a los dos lados, también arriba y a la derecha, marcas secundarias, bordes completos o solo abajo y a la izquierda, rejilla principal y secundaria, y notación de los números (automática, científica ×10ⁿ o sin exponente). |
+| **Leyenda** | Mostrarla, posición (dentro, en 9 sitios, o fuera: a la derecha, encima o debajo), columnas, tamaño de letra, título y marco. |
+| **Datos y curvas** | Tamaño de los puntos, grosor de las líneas, de las curvas ajustadas y de las barras de error, topes de las barras, color de los datos y del ajuste, y el cuadro de resultados. |
+| **Textos libres** | Los textos añadidos: contenido, tamaño y, si señalan algo, las coordenadas de la flecha. |
+| **Estilo** | Plantillas: *Por defecto*, *Revista (física)* (marcas hacia dentro en los cuatro lados, sin rejilla), *Presentación* (letra y líneas grandes), *Minimalista* y las que guardes tú. *Usar el estilo actual en las gráficas nuevas* lo deja como predeterminado. |
+
+*Aplicar* enseña el cambio sin cerrar el diálogo. Una plantilla guarda solo el estilo, no los textos, los
+límites ni las posiciones. Al abrir otros datos se borran el título, las etiquetas, los límites y los
+textos (eran de los datos anteriores); el estilo y las posiciones se quedan. Todo va en la sesión y se
+respeta al exportar: con otro tamaño de letra, el título, la leyenda y los textos cambian en proporción.
 
 Todo lo que cambia los datos se puede **deshacer y rehacer** (Ctrl+Z / Ctrl+Mayús+Z): editar celdas,
 pegar, renombrar columnas, excluir puntos o fijar el rango.
@@ -685,8 +713,8 @@ La batería de tests (`pytest`, más de 280 pruebas) comprueba, entre otras cosa
   parámetros y, con datos que siguen la distribución, el p-valor del test χ² es uniforme (p < 0.05 en
   ≈ 5 % de 400 conjuntos) para la normal, la Poisson y la exponencial.
 - **Interfaz**: arranque, temas, apertura, ajuste, clic para excluir, selección con cancelación,
-  interpolación, intersección, pegado, columnas de texto, todos los tipos de gráfica, eje partido y
-  exportación, todo sin pantalla.
+  interpolación, intersección, pegado, columnas de texto, todos los tipos de gráfica, eje partido,
+  arrastre y edición de título, leyenda, etiquetas y textos, plantillas y exportación, todo sin pantalla.
 
 La CI de GitHub ejecuta los tests en **Ubuntu, Windows y macOS** con Python 3.10, 3.13 y 3.14.
 
@@ -719,7 +747,8 @@ Programa_Python/
 │       ├── paneles.py     #   pestañas de análisis
 │       ├── representar.py #   pestaña Representar (tipo de gráfica, series, cortes del eje x)
 │       ├── graficas.py    #   histograma, barras, sectores, cajas / violín y polar
-│       ├── dialogos.py    #   personalizar y exportar gráfica (vista previa, formatos, CSV)
+│       ├── dialogos.py    #   exportar gráfica (vista previa, formatos, CSV)
+│       ├── personalizar.py #  opciones de la gráfica por pestañas y plantillas de estilo
 │       ├── sesion.py      #   ficheros .ajustelab
 │       ├── tema.py, estilo.py, iconos.py, widgets.py, ejemplos.py, acerca.py, trabajos.py
 │       └── recursos/      #   icono de la aplicación y sorpresa (ver LEEME.txt)

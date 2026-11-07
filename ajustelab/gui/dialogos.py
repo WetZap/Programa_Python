@@ -1,4 +1,4 @@
-"""Diálogos: personalizar la gráfica y exportarla para publicación.
+"""Diálogos: exportar la gráfica para publicación (personalizarla: ``personalizar.py``).
 
 La exportación tiene vista previa al tamaño real, formatos vectoriales (PDF, SVG,
 EPS) y de imagen (PNG, TIFF), anchos de revista con proporción fija, tipografía
@@ -12,7 +12,6 @@ import atexit
 import io
 import re
 from contextlib import contextmanager
-from dataclasses import replace
 from pathlib import Path
 
 import matplotlib
@@ -23,7 +22,7 @@ from matplotlib.figure import Figure
 from PySide6.QtCore import QByteArray, QMimeData, QSize, Qt, QTimer
 from PySide6.QtGui import QColor, QGuiApplication, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFileDialog,
-                               QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit, QSpinBox, QVBoxLayout)
+                               QFormLayout, QFrame, QHBoxLayout, QLabel, QSpinBox, QVBoxLayout)
 
 from .grafica import (COLORES_PUBLICACION, Escena, OpcionesGrafica, _malla, dibujar, fuera_de_cortes,
                       fusionar_cortes)
@@ -55,69 +54,6 @@ FUENTES = {
 
 
 
-class DialogoPersonalizar(QDialog):
-    """Título, etiquetas (admiten LaTeX entre $…$), letra, leyenda, rejilla, cuadro de resultados."""
-
-    def __init__(self, opciones: OpcionesGrafica, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Personalizar gráfica")
-        o = opciones
-        self.titulo = QLineEdit(o.titulo)
-        self.ex = QLineEdit(o.etiqueta_x)
-        self.ey = QLineEdit(o.etiqueta_y)
-        self.ey2 = QLineEdit(o.etiqueta_y2)
-        for w, ph in ((self.titulo, "sin título"), (self.ex, "nombre de la columna"), (self.ey, "nombre de la columna"),
-                      (self.ey2, "nombre de la columna (pestaña Representar)")):
-            w.setPlaceholderText(ph)
-            w.setToolTip("Admite fórmulas LaTeX entre $…$, p. ej. $\\lambda$ (nm) o $t$ (s)")
-        self.fuente = QDoubleSpinBox()
-        self.fuente.setRange(6, 24)
-        self.fuente.setSingleStep(0.5)
-        self.fuente.setValue(o.tam_fuente)
-        self.leyenda = QCheckBox("Mostrar leyenda")
-        self.leyenda.setChecked(o.leyenda)
-        self.rejilla = QCheckBox("Mostrar rejilla")
-        self.rejilla.setChecked(o.rejilla)
-        self.cuadro = QCheckBox("Cuadro con la ecuación y los parámetros (arrastrable)")
-        self.cuadro.setChecked(o.cuadro_resultados)
-        form = QFormLayout(self)
-        form.addRow("Título:", self.titulo)
-        form.addRow("Eje x:", self.ex)
-        form.addRow("Eje y:", self.ey)
-        form.addRow("Eje y derecho:", self.ey2)
-        form.addRow("Tamaño de letra:", self.fuente)
-        form.addRow(self.leyenda)
-        form.addRow(self.rejilla)
-        form.addRow(self.cuadro)
-        botones = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel | QDialogButtonBox.Reset)
-        botones.accepted.connect(self.accept)
-        botones.rejected.connect(self.reject)
-        botones.button(QDialogButtonBox.Reset).setText("Restablecer")
-        botones.button(QDialogButtonBox.Reset).clicked.connect(self._restablecer)
-        form.addRow(botones)
-
-    def _restablecer(self):
-        d = OpcionesGrafica()
-        self.titulo.setText(d.titulo)
-        self.ex.setText(d.etiqueta_x)
-        self.ey.setText(d.etiqueta_y)
-        self.ey2.setText(d.etiqueta_y2)
-        self.fuente.setValue(d.tam_fuente)
-        self.leyenda.setChecked(d.leyenda)
-        self.rejilla.setChecked(d.rejilla)
-        self.cuadro.setChecked(d.cuadro_resultados)
-
-    def aplicar(self, o: OpcionesGrafica) -> None:
-        o.titulo = self.titulo.text()
-        o.etiqueta_x = self.ex.text()
-        o.etiqueta_y = self.ey.text()
-        o.etiqueta_y2 = self.ey2.text()
-        o.tam_fuente = self.fuente.value()
-        o.leyenda = self.leyenda.isChecked()
-        o.rejilla = self.rejilla.isChecked()
-        o.cuadro_resultados = self.cuadro.isChecked()
-
-
 @contextmanager
 def estilo_fuente(fuente: str = "sans", editable: bool = True):
     """Parámetros de matplotlib para dibujar *y* guardar (la familia se fija al
@@ -141,7 +77,7 @@ def renderizar(escena: Escena, opciones: OpcionesGrafica, colores: dict, oscuro:
 
     Con ``constrained`` el contenido se ajusta *dentro* del tamaño pedido (no se
     recorta después), así que el fichero mide exactamente ancho × alto."""
-    o = replace(opciones, tam_fuente=tam_fuente) if tam_fuente else opciones
+    o = opciones.escalada(tam_fuente) if tam_fuente else opciones
     with estilo_fuente(fuente, editable):
         fig = Figure(figsize=(ancho_cm / 2.54, alto_cm / 2.54), layout="constrained")
         FigureCanvasAgg(fig)

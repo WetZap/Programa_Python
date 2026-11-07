@@ -71,17 +71,21 @@ def _objetivos(fig: Figure) -> list:
     return fig._ajustelab.setdefault("objetivos", [])
 
 
-def _titulo(ax, o: OpcionesGrafica, c: dict) -> None:
-    if o.titulo:
-        ax.set_title(o.titulo, color=c["texto"], fontsize=o.tam_fuente * 1.15)
-
-
 def _rejilla_valores(ax, o: OpcionesGrafica, c: dict, eje: str) -> None:
     """Rejilla solo en el eje de los valores (la otra no aporta nada)."""
-    ax.grid(False)
+    ax.grid(False, which="both")
     if o.rejilla:
-        ax.grid(True, axis=eje, color=c["rejilla"], linewidth=0.6, alpha=0.8)
-        ax.set_axisbelow(True)
+        ax.grid(True, axis=eje, which="major", color=c["rejilla"], linewidth=0.6, alpha=0.8)
+    if o.rejilla_menor:
+        ax.grid(True, axis=eje, which="minor", color=c["rejilla"], linewidth=0.4, alpha=0.45)
+    ax.set_axisbelow(True)
+
+
+def _sin_marcas_menores(eje) -> None:
+    """Un eje de categorías no lleva marcas secundarias."""
+    from matplotlib.ticker import NullLocator
+
+    eje.set_minor_locator(NullLocator())
 
 
 def _valor(v: float, e: float | None = None) -> str:
@@ -122,6 +126,7 @@ class HistoGrafica:
     avisos: list[str] = field(default_factory=list)
     permite_log_x = False
     permite_log_y = True
+    ejes_numericos = ("x", "y")
 
     def dibujar(self, fig: Figure, o: OpcionesGrafica, c: dict, oscuro: bool = False):
         ax = fig.add_subplot()
@@ -138,10 +143,10 @@ class HistoGrafica:
                        linewidth=0.6, label=col.nombre, zorder=2)
             else:
                 ax.stairs(y, h.bordes, color=color, alpha=0.12, fill=True, zorder=2)
-                ax.stairs(y, h.bordes, color=color, linewidth=1.8, label=col.nombre, zorder=3)
+                ax.stairs(y, h.bordes, color=color, linewidth=o.grosor_linea + 0.2, label=col.nombre, zorder=3)
             if self.errores:
-                ax.errorbar(h.centros, y, yerr=dy, fmt="none", ecolor=c["texto"] if una else color, elinewidth=1,
-                            capsize=2, alpha=0.75, zorder=4)
+                ax.errorbar(h.centros, y, yerr=dy, fmt="none", ecolor=c["texto"] if una else color,
+                            elinewidth=o.grosor_error, capsize=o.tam_tapa, alpha=0.75, zorder=4)
             if aj is not None:
                 cx, cy = aj.curva(h, self.normalizacion)
                 trazo = c["texto"] if una else color
@@ -150,9 +155,10 @@ class HistoGrafica:
                 if aj.ndof > 0:
                     etiqueta += f"\nχ²/ν = {aj.chi2 / aj.ndof:.3g}, p = {aj.p:.2g}"
                 if aj.discreta:
-                    ax.plot(cx, cy, "o", ms=4.5, color=trazo, mfc=c["ejes"], mew=1.5, label=etiqueta, zorder=5)
+                    ax.plot(cx, cy, "o", ms=o.tam_marcador * 0.9, color=trazo, mfc=c["ejes"], mew=1.5, label=etiqueta,
+                            zorder=5)
                 else:
-                    ax.plot(cx, cy, color=trazo, linewidth=2, linestyle="-" if una else "--", label=etiqueta,
+                    ax.plot(cx, cy, color=trazo, linewidth=o.grosor_ajuste, linestyle="-" if una else "--", label=etiqueta,
                             zorder=5)
         h0 = self.histogramas[0]
         ax.set_xlabel(o.etiqueta_x or self.nombre_x)
@@ -161,7 +167,6 @@ class HistoGrafica:
             ax.set_yscale("log", nonpositive="clip")
         else:
             ax.set_ylim(bottom=0)
-        _titulo(ax, o, c)
         handles, labels = ax.get_legend_handles_labels()
         if o.leyenda and len(handles) >= 2:
             _leyenda(ax, handles, labels, o, c)
@@ -259,6 +264,10 @@ class BarrasGrafica:
     permite_log_x = False
     permite_log_y = True
 
+    @property
+    def ejes_numericos(self):  # el de los valores (los límites x/y se aplican tal cual)
+        return ("x",) if self.horizontal else ("y",)
+
     def dibujar(self, fig: Figure, o: OpcionesGrafica, c: dict, oscuro: bool = False):
         ax = fig.add_subplot()
         _estilo_ejes(ax, c, o)
@@ -266,7 +275,7 @@ class BarrasGrafica:
         n = len(self.series)
         pos = np.arange(len(self.categorias), dtype=float)
         ancho = 0.8 / max(n, 1)
-        error_kw = dict(ecolor=c["texto"], elinewidth=1, capsize=3, alpha=0.8)
+        error_kw = dict(ecolor=c["texto"], elinewidth=o.grosor_error, capsize=o.tam_tapa + 1, alpha=0.8)
         objetivos = _objetivos(fig)
         for k, s in enumerate(self.series):
             color = s.color_en(oscuro)
@@ -288,12 +297,14 @@ class BarrasGrafica:
         largo = sum(len(t) for t in self.categorias)
         if self.horizontal:
             ax.set_yticks(pos, self.categorias)
+            _sin_marcas_menores(ax.yaxis)
             ax.invert_yaxis()  # la primera categoría arriba
             ax.tick_params(axis="y", length=0)
         else:
             girar = largo > 60 or len(self.categorias) > 12
             ax.set_xticks(pos, self.categorias, rotation=45 if girar else 0, ha="right" if girar else "center",
                           rotation_mode="anchor")
+            _sin_marcas_menores(ax.xaxis)
             ax.tick_params(axis="x", length=0)
         etiqueta_valores = o.etiqueta_y or (self.series[0].nombre if n == 1 else "")
         etiqueta_cat = o.etiqueta_x or self.nombre_categorias
@@ -301,7 +312,6 @@ class BarrasGrafica:
         (ax.set_ylabel if self.horizontal else ax.set_xlabel)(etiqueta_cat)
         if o.log_y and all(np.all(s.valores[np.isfinite(s.valores)] > 0) for s in self.series):
             (ax.set_xscale if self.horizontal else ax.set_yscale)("log")
-        _titulo(ax, o, c)
         handles, labels = ax.get_legend_handles_labels()
         if o.leyenda and len(handles) >= 2:
             _leyenda(ax, handles, labels, o, c)
@@ -358,7 +368,6 @@ class CircularGrafica:
             ax.text(0, 0, f"{o.etiqueta_y or self.nombre or 'Total'}\n{total:.4g}", ha="center", va="center",
                     color=c["texto"], fontsize=o.tam_fuente)
         ax.set_aspect("equal")
-        _titulo(ax, o, c)
         objetivos = _objetivos(fig)
         for cuna, e, v, p in zip(cunas, self.etiquetas, self.valores, pct):
             texto = f"{e}\n{v:.6g} ({p:.1f} %)"
@@ -458,6 +467,7 @@ class CajasGrafica:
     media: bool = True
     permite_log_x = False
     permite_log_y = True
+    ejes_numericos = ("y",)
 
     def dibujar(self, fig: Figure, o: OpcionesGrafica, c: dict, oscuro: bool = False):
         ax = fig.add_subplot()
@@ -497,12 +507,15 @@ class CajasGrafica:
             rng = np.random.default_rng(0)  # misma dispersión en cada dibujo
             amplitud = 0.12 if self.modo == "violin" else 0.07
             for p, d, color in zip(pos, datos, colores):
-                ax.plot(p + rng.uniform(-amplitud, amplitud, d.size), d, "o", ms=3, color=color, alpha=0.55,
+                ax.plot(p + rng.uniform(-amplitud, amplitud, d.size), d, "o", ms=o.tam_marcador * 0.6, color=color,
+                        alpha=0.55,
                         linestyle="none", zorder=4)
         if self.media:
             medias = [float(d.mean()) for d in datos]
-            ax.plot(pos, medias, "D", ms=6, mfc=c["ejes"], mec=c["texto"], mew=1.3, linestyle="none", zorder=5)
+            ax.plot(pos, medias, "D", ms=o.tam_marcador + 1, mfc=c["ejes"], mec=c["texto"], mew=1.3,
+                    linestyle="none", zorder=5)
         ax.set_xticks(pos, [g.nombre for g in self.grupos])
+        _sin_marcas_menores(ax.xaxis)
         ax.tick_params(axis="x", length=0)
         ax.set_xlim(0.4, len(datos) + 0.6)
         ax.set_ylabel(o.etiqueta_y or (self.grupos[0].nombre if len(self.grupos) == 1 else ""))
@@ -510,7 +523,6 @@ class CajasGrafica:
             ax.set_xlabel(o.etiqueta_x)
         if o.log_y and all(np.all(d > 0) for d in datos):
             ax.set_yscale("log")
-        _titulo(ax, o, c)
         return ax
 
     def tablas(self) -> dict[str, pd.DataFrame]:
@@ -568,6 +580,7 @@ class PolarGrafica:
             ax.set_theta_direction(-1)
         ax.tick_params(colors=c["texto"], labelsize=o.tam_fuente * 0.85)
         ax.grid(o.rejilla, color=c["rejilla"], linewidth=0.6)
+        ax.tick_params(direction="out")
         ax.spines["polar"].set_color(c["rejilla"])
         if not self.grados:
             ax.set_xticks(np.arange(8) * np.pi / 4, _PI)
@@ -582,14 +595,16 @@ class PolarGrafica:
             etiqueta = f"r: {s.nombre}"
             if dy is not None:
                 cont = ax.errorbar(s.x[m], s.y[m], yerr=dy[m], color=color, ecolor=color, linestyle=linea,
-                                   marker=marcador, ms=5, linewidth=1.6, elinewidth=1, capsize=0, label=etiqueta,
+                                   marker=marcador, ms=o.tam_marcador, linewidth=o.grosor_linea,
+                                   elinewidth=o.grosor_error, capsize=0, label=etiqueta,
                                    zorder=3)
                 linea2d = cont.lines[0]
             else:
-                (linea2d,) = ax.plot(s.x[m], s.y[m], color=color, linestyle=linea, marker=marcador, ms=5,
-                                     linewidth=1.6, label=etiqueta, zorder=3)
+                (linea2d,) = ax.plot(s.x[m], s.y[m], color=color, linestyle=linea, marker=marcador,
+                                     ms=o.tam_marcador, linewidth=o.grosor_linea, label=etiqueta, zorder=3)
             if np.any(~m) and marcador != "none":
-                ax.plot(s.x[~m], s.y[~m], linestyle="none", marker=marcador, ms=6, mfc="none", mec=color, alpha=0.5,
+                ax.plot(s.x[~m], s.y[~m], linestyle="none", marker=marcador, ms=o.tam_marcador + 1, mfc="none",
+                        mec=color, alpha=0.5,
                         zorder=2)
             indices = np.flatnonzero(m)
 
@@ -604,13 +619,9 @@ class PolarGrafica:
                 return f"fila {fila}\n{self.nombre_theta} = {th:.6g}{'°' if self.grados else ' rad'}\n{s.nombre} = {r}"
 
             objetivos.append(etiqueta_punto)
-        _titulo(ax, o, c)
         handles, labels = ax.get_legend_handles_labels()
         if o.leyenda and handles:  # en polar no hay etiqueta del eje r: la leyenda dice qué es r
-            ley = ax.legend(handles, labels, fontsize=o.tam_fuente * 0.85, framealpha=0.9, facecolor=c["ejes"],
-                            edgecolor=c["rejilla"], loc="upper left", bbox_to_anchor=(1.04, 1.0))
-            for t in ley.get_texts():
-                t.set_color(c["texto"])
+            _leyenda(ax, handles, labels, o, c, defecto="outside right upper")
         return ax
 
     def tablas(self) -> dict[str, pd.DataFrame]:
