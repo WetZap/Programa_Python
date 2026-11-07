@@ -217,7 +217,9 @@ def main(argv: list[str] | None = None) -> int:
     os.environ.setdefault("RESOURCE_NAME", "ajustelab")  # WM_CLASS en X11: agrupa la ventana con su icono
     from . import sistema
 
-    aviso = sistema.aviso_arranque()
+    # En el ejecutable independiente, Qt y sus bibliotecas van dentro: la comprobación
+    # de las del sistema daría falsas alarmas.
+    aviso = None if getattr(sys, "frozen", False) else sistema.aviso_arranque()
     if aviso:
         _avisar(aviso)  # se intenta abrir igualmente: el aviso puede ser una falsa alarma
     if args.probar_interfaz:
