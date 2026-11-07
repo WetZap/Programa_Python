@@ -1,4 +1,4 @@
-"""Pestañas de trabajo: Ajuste, Selección, Interpolación e Intersección.
+"""Pestañas de trabajo: Ajuste, Selección e Intersección (Interpolación: ``panel_interpolacion``).
 
 Cada panel lanza sus cálculos en segundo plano (``ventana.lanzar``), sabe
 construir la :class:`~ajustelab.gui.grafica.Escena` de su último resultado y
@@ -9,13 +9,12 @@ from __future__ import annotations
 import numpy as np
 from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QFontDatabase, QGuiApplication
-from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QFileDialog, QFormLayout, QGridLayout,
-                               QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QPlainTextEdit, QPushButton,
-                               QSpinBox, QSplitter, QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QFormLayout, QHBoxLayout, QHeaderView, QLabel,
+                               QLineEdit, QPlainTextEdit, QPushButton, QSpinBox, QSplitter, QTableWidget,
+                               QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget)
 
 from ..ajuste import ResultadoAjuste, ajustar
 from ..estadistica import formatear
-from ..interpolacion import METODOS, ErrorInterpolacion, Interpolacion, interpolar
 from ..interseccion import Interseccion, dividir, intersecar_datos
 from ..modelos import CATALOGO, ErrorModelo, Modelo, clave_de, desde_expresion
 from ..seleccion import Seleccion, seleccionar
@@ -918,196 +917,6 @@ class PanelSeleccion(Panel):
         self.usar_dx.setChecked(e.get("usar_dx", True))
         if e.get("calculado"):
             self.ejecutar()
-
-
-# ---------------------------------------------------------------------------
-def _calcular_interpolacion(f: Interpolacion, x0, y0, a, b) -> str:
-    """Evaluaciones pedidas, con incertidumbre Monte Carlo si hay σ (se ejecuta en un hilo)."""
-    con_error = f.dy is not None or f.dx is not None
-    lineas = []
-
-    def con_mc(nombre, funcion):
-        try:
-            if con_error:
-                r = f.monte_carlo(funcion, n=1000)
-                lineas.append(f"{nombre} = {formatear(r.nominal, r.sigma)}    ({r.nominal:.10g} ± {r.sigma:.3g})")
-            else:
-                lineas.append(f"{nombre} = {float(funcion(f)):.10g}")
-        except (ErrorInterpolacion, ValueError, IndexError) as e:
-            lineas.append(f"{nombre}: {e}")
-
-    if x0 is not None:
-        con_mc(f"f({x0:g})", lambda g: g(x0))
-        con_mc(f"f'({x0:g})", lambda g: g.derivada(x0))
-    if y0 is not None:
-        raices = f.inversa(y0)
-        if raices.size == 0:
-            lineas.append(f"No hay ningún x en el rango con f(x) = {y0:g}.")
-        for r0 in raices:
-            con_mc(f"x con f(x) = {y0:g} (cerca de {r0:.4g})",
-                   lambda g, r0=r0: g.inversa(y0)[np.argmin(np.abs(g.inversa(y0) - r0))])
-    if a is not None and b is not None:
-        con_mc(f"∫ f dx de {a:g} a {b:g}", lambda g: g.integral(a, b))
-    if con_error and lineas:
-        lineas.append("(incertidumbres por Monte Carlo con 1000 réplicas de los datos)")
-    return "\n".join(lineas)
-
-
-class PanelInterpolacion(Panel):
-    titulo = "Interpolación"
-    nombre_icono = "ajustar"
-
-    def __init__(self, ventana, parent=None):
-        super().__init__(ventana, parent)
-        self.resultado: Interpolacion | None = None
-        self.metodo = QComboBox()
-        for clave, nombre in METODOS.items():
-            self.metodo.addItem(nombre, clave)
-        self.metodo.setCurrentIndex(self.metodo.findData("natural"))
-        self.d0 = QLineEdit()
-        self.d1 = QLineEdit()
-        self.lam = QLineEdit()
-        for w, ph in ((self.d0, "f'(x₀)"), (self.d1, "f'(xₙ)"), (self.lam, "λ (auto)")):
-            w.setPlaceholderText(ph)
-            w.setMaximumWidth(80)
-        self.extrapolar = QCheckBox("Extrapolar")
-        boton = _boton_principal("Interpolar", "ajustar")
-        boton.clicked.connect(self.interpolar)
-        self.metodo.currentIndexChanged.connect(self._habilitar)
-        fila = QHBoxLayout()
-        for w in (QLabel("Método:"), self.metodo, self.d0, self.d1, self.lam, self.extrapolar):
-            fila.addWidget(w)
-        fila.addStretch(1)
-        fila.addWidget(boton)
-
-        self.x0, self.y0, self.a, self.b = (QLineEdit() for _ in range(4))
-        caja = QGroupBox("Calcular")
-        rejilla = QGridLayout(caja)
-        rejilla.addWidget(QLabel("f(x) y f'(x) en x ="), 0, 0)
-        rejilla.addWidget(self.x0, 0, 1)
-        rejilla.addWidget(QLabel("x tal que f(x) ="), 0, 2)
-        rejilla.addWidget(self.y0, 0, 3)
-        rejilla.addWidget(QLabel("∫ desde"), 1, 0)
-        rejilla.addWidget(self.a, 1, 1)
-        rejilla.addWidget(QLabel("hasta"), 1, 2)
-        rejilla.addWidget(self.b, 1, 3)
-        b_calc = QPushButton("Calcular")
-        b_calc.clicked.connect(self.calcular)
-        rejilla.addWidget(b_calc, 0, 4, 2, 1)
-
-        self.salida = _monoespaciado(QPlainTextEdit())
-        self.salida.setReadOnly(True)
-        b_exportar = QPushButton(icono("exportar"), "Exportar tramos…")
-        b_latex = QPushButton(icono("copiar"), "Copiar tramos (LaTeX)")
-        b_exportar.clicked.connect(self.exportar)
-        b_latex.clicked.connect(self._copiar_latex)
-        botones = QHBoxLayout()
-        botones.addStretch(1)
-        botones.addWidget(b_exportar)
-        botones.addWidget(b_latex)
-
-        capa = QVBoxLayout(self)
-        capa.addLayout(fila)
-        capa.addWidget(caja)
-        capa.addWidget(self.salida, 1)
-        capa.addLayout(botones)
-        self._habilitar()
-
-    def _habilitar(self):
-        m = self.metodo.currentData()
-        self.d0.setVisible(m == "clamped")
-        self.d1.setVisible(m == "clamped")
-        self.lam.setVisible(m == "suavizado")
-        self.metodo.setToolTip({"pchip": "Monótono: no sobreoscila", "suavizado": "No pasa por los puntos: para datos con ruido",
-                                "polinomio": "Solo para pocos puntos (Runge)"}.get(m, ""))
-
-    def interpolar(self, _=None) -> None:
-        obtenidos = self.ventana.obtener_datos()
-        if obtenidos is None:
-            return
-        datos, _ = obtenidos
-        m = self.metodo.currentData()
-        try:
-            kw = {"extrapolar": self.extrapolar.isChecked()}
-            if m == "clamped":
-                kw["derivadas_extremos"] = (_numero(self.d0.text()), _numero(self.d1.text()))
-                if None in kw["derivadas_extremos"]:
-                    raise ValueError("indica f'(x₀) y f'(xₙ).")
-            if m == "suavizado":
-                kw["suavizado"] = _numero(self.lam.text())
-            self.resultado = interpolar(datos, m, **kw)
-        except (ErrorInterpolacion, ValueError) as e:
-            self.ventana.mostrar_error(f"Interpolación: {e}")
-            return
-        self.obsoleto = False
-        self.salida.setPlainText(self.ventana.fmt(self.resultado.resumen()))
-        self.ventana.actualizar_grafica()
-
-    def calcular(self) -> None:
-        if self.resultado is None:
-            self.interpolar()
-            if self.resultado is None:
-                return
-        try:
-            x0, y0, a, b = (_numero(w.text()) for w in (self.x0, self.y0, self.a, self.b))
-        except ValueError:
-            self.ventana.mostrar_error("Los campos de «Calcular» deben ser números.")
-            return
-        trabajo = Trabajo(_calcular_interpolacion, self.resultado, x0, y0, a, b)
-        base = self.resultado.resumen()
-        self.ventana.lanzar(trabajo, lambda texto: self.salida.setPlainText(self.ventana.fmt(base + "\n\n" + texto)),
-                            "Calculando (Monte Carlo)…", canal=self.titulo)
-
-    def _copiar_latex(self) -> None:
-        if self.resultado is not None:
-            QGuiApplication.clipboard().setText(self.resultado.exportar_tramos("latex"))
-            self.ventana.notificar("Tramos en LaTeX copiados.", "bueno")
-
-    def exportar(self) -> None:
-        if self.resultado is None:
-            return
-        ruta, filtro = QFileDialog.getSaveFileName(self, "Exportar tramos", "tramos.txt",
-                                                   "Texto (*.txt);;LaTeX (*.tex);;CSV (*.csv)")
-        if not ruta:
-            return
-        formato = "latex" if ruta.lower().endswith(".tex") or "LaTeX" in filtro else (
-            "csv" if ruta.lower().endswith(".csv") or "CSV" in filtro else "txt")
-        with open(ruta, "w", encoding="utf-8") as fh:
-            fh.write(self.resultado.exportar_tramos(formato))
-        self.ventana.notificar(f"Tramos guardados en {ruta}", "bueno")
-
-    def tiene_resultado(self) -> bool:
-        return self.resultado is not None
-
-    def escena(self, datos, filas) -> Escena:
-        return Escena(datos=datos, filas=filas, interpolacion=self.resultado)
-
-    def recalcular(self) -> None:
-        if self.resultado is not None:
-            self.interpolar()
-
-    def reiniciar(self) -> None:
-        self.resultado = None
-        self.salida.clear()
-
-    def texto_informe(self) -> str:
-        return self.salida.toPlainText()
-
-    def estado(self) -> dict:
-        return {"metodo": self.metodo.currentData(), "d0": self.d0.text(), "d1": self.d1.text(),
-                "lam": self.lam.text(), "extrapolar": self.extrapolar.isChecked(),
-                "x0": self.x0.text(), "y0": self.y0.text(), "a": self.a.text(), "b": self.b.text(),
-                "calculado": self.resultado is not None}
-
-    def restaurar(self, e: dict) -> None:
-        i = self.metodo.findData(e.get("metodo", "natural"))
-        self.metodo.setCurrentIndex(max(i, 0))
-        for w, k in ((self.d0, "d0"), (self.d1, "d1"), (self.lam, "lam"), (self.x0, "x0"), (self.y0, "y0"),
-                     (self.a, "a"), (self.b, "b")):
-            w.setText(e.get(k, ""))
-        self.extrapolar.setChecked(e.get("extrapolar", False))
-        if e.get("calculado"):
-            self.interpolar()
 
 
 # ---------------------------------------------------------------------------

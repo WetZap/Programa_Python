@@ -196,3 +196,23 @@ def test_hoja_y_json_con_etiquetas(tmp_path):
     original.to_json(ruta, orient="columns")
     df = leer_tabla(ruta)
     assert list(df["Grupo"]) == ["A", "B", "C"] and df["valor"].tolist() == [1.5, 2.5, 3.5]
+
+
+@pytest.mark.parametrize("formato,ext", [("csv", ".csv"), ("csv_es", ".csv"), ("txt", ".txt"), ("xlsx", ".xlsx"),
+                                          ("ods", ".ods"), ("json", ".json")])
+def test_guardar_tabla_y_volver_a_leer(tmp_path, formato, ext):
+    from ajustelab.datos import guardar_tabla
+
+    original = pd.DataFrame({"Metal": ["Pb", "Cu", None], "t (s)": [0.1, 2.5, np.nan],
+                             "V": [1e-9, 3.14159265358979, 4.0]})
+    leida = leer_tabla(guardar_tabla(original, tmp_path / f"datos{ext}", formato))
+    assert list(leida.columns) == ["Metal", "t (s)", "V"]
+    assert leida["Metal"].iloc[:2].tolist() == ["Pb", "Cu"] and leida["V"].tolist() == [1e-9, 3.14159265358979, 4.0]
+    assert np.isnan(leida["t (s)"].iloc[2])
+
+
+def test_guardar_tabla_extension_desconocida(tmp_path):
+    from ajustelab.datos import guardar_tabla
+
+    with pytest.raises(ErrorDatos):
+        guardar_tabla(pd.DataFrame({"x": [1]}), tmp_path / "datos.abc")

@@ -1154,3 +1154,173 @@ def test_personalizar_en_todos_los_tipos(app, ventana):
     _arrastrar(g, "titulo", 0, -30)
     _arrastrar(g, "etiqueta_x", 80, 0)
     assert g.opciones.pos_titulo[2] == "figura" and g.opciones.pos_etiqueta_x[2] == "figura"
+
+
+# --- 1.7: rango escrito, guardar subconjuntos, evaluar la interpolación, marcas ------
+def test_rango_escrito(app, ventana):
+    ventana.abrir(EJEMPLO)
+    esperar(app, ventana)
+    pd_ = ventana.panel_datos
+    m = pd_.modelo
+    pd_.rango_desde.setText("1,5")
+    pd_.rango_hasta.setText("")  # vacío: hasta el último valor
+    pd_.aplicar_rango_escrito()
+    esperar(app, ventana)
+    assert m.rango_x == (1.5, float(np.nanmax(m.x_actual)))
+    assert "de 16 puntos" in pd_.aviso_rango.text() and pd_.b_quitar_rango.isEnabled()
+    d, _ = ventana.obtener_datos()
+    assert np.all(d.x[d.incluidos] >= 1.5)
+    pd_.rango_desde.setText("abc")
+    pd_.aplicar_rango_escrito()
+    assert m.rango_x[0] == 1.5 and "numérico" in pd_.aviso_rango.text()
+    ventana.pila.undo()
+    assert m.rango_x is None and pd_.rango_desde.text() == ""
+    pd_.rango_desde.setText("4")
+    pd_.rango_hasta.setText("2")  # al revés: se ordena
+    pd_.aplicar_rango_escrito()
+    assert m.rango_x == (2.0, 4.0) and pd_.rango_desde.text() == "2"
+    pd_.b_quitar_rango.click()
+    assert m.rango_x is None
+
+
+def test_guardar_subconjunto_de_datos(app, ventana, tmp_path, monkeypatch):
+    from ajustelab.datos import leer_tabla
+    from ajustelab.gui.guardar_datos import DialogoGuardarDatos
+
+    ventana.abrir(EJEMPLO)
+    esperar(app, ventana)
+    m = ventana.panel_datos.modelo
+    m.alternar_exclusion(2)
+    dlg = DialogoGuardarDatos(m, [0, 3, 5], "t", ventana)
+    assert dlg.modo.currentData() == "seleccion" and dlg.filas().tolist() == [0, 3, 5]
+    dlg.modo.setCurrentIndex(dlg.modo.findData("x"))
+    dlg.x_hasta.setText("2")
+    x = m.a_dataframe()["t"].to_numpy()
+    assert dlg.filas().tolist() == np.flatnonzero(x <= 2).tolist()
+    dlg.modo.setCurrentIndex(dlg.modo.findData("filas"))
+    dlg.fila_desde.setValue(3)
+    dlg.fila_hasta.setValue(7)
+    assert dlg.filas().tolist() == [2, 3, 4, 5, 6] and "5 filas × 4 columnas" in dlg.resumen.text()
+    dlg.modo.setCurrentIndex(dlg.modo.findData("incluidas"))
+    assert 2 not in dlg.filas() and len(dlg.filas()) == 15
+    dlg.columnas.item(2).setCheckState(Qt.Unchecked)
+    assert dlg.columnas_elegidas() == ["t", "V", "dV"] and dlg.tabla().shape == (15, 3)
+    # desde la ventana: los 5 primeros valores en Excel y se abren
+    ruta = tmp_path / "primeros.xlsx"
+
+    def ejecutar(d):
+        d.modo.setCurrentIndex(d.modo.findData("filas"))
+        d.fila_desde.setValue(1)
+        d.fila_hasta.setValue(5)
+        d.formato.setCurrentIndex(d.formato.findData("xlsx"))
+        d.abrir_despues.setChecked(True)
+        return QtWidgets.QDialog.Accepted
+
+    monkeypatch.setattr(DialogoGuardarDatos, "exec", ejecutar)
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: (str(tmp_path / "primeros"), ""))
+    assert ventana.guardar_datos()
+    esperar(app, ventana)
+    assert len(leer_tabla(ruta)) == 5 and m.rowCount() == 5 and ventana._ruta_datos == ruta
+
+
+def test_interpolacion_evaluar_y_resumen(app, ventana, tmp_path, monkeypatch):
+    ventana.abrir(EJEMPLO)
+    esperar(app, ventana)
+    p = ventana.p_interp
+    ventana.pestanas.setCurrentWidget(p)
+    p.interpolar()
+    p.x0.setText("2,5")
+    p.evaluar_punto()
+    assert p.punto.text().startswith("f(2.5) = ")  # el valor, al momento
+    esperar(app, ventana, 60)
+    assert "±" in p.punto.text()  # y su incertidumbre en cuanto se calcula
+    p.x0.setText("99")
+    p.evaluar_punto()
+    assert "fuera del rango" in p.punto.text()
+    p.xs.setText("1:3:0,5")
+    p.evaluar_tabla()
+    esperar(app, ventana, 60)
+    assert p.tabla.rowCount() == 5 and p.tabla_valores["x"].tolist() == [1, 1.5, 2, 2.5, 3]
+    assert p.resultados.currentWidget() is p.tabla
+    p.generar_informe()
+    esperar(app, ventana, 60)
+    assert p.informe_texto.startswith("Se ha interpolado") and "\\begin{tabular}" in p.informe_latex
+    assert QGuiApplication.clipboard().text() == p.informe_texto and p.texto_informe() == p.informe_texto
+    ruta = tmp_path / "valores.csv"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: (str(ruta), "CSV (*.csv)"))
+    p.exportar_tabla()
+    assert ruta.read_text().splitlines()[0] == "x,f,sigma_f,derivada,sigma_derivada"
+    destino = tmp_path / "resumen.tex"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: (str(destino), "LaTeX (*.tex)"))
+    p.exportar_informe()
+    assert "\\toprule" in destino.read_text(encoding="utf-8")
+    assert p.estado()["xs"] == "1:3:0,5"
+
+
+def test_marcas(app, ventana, tmp_path, monkeypatch):
+    from matplotlib.backend_bases import MouseEvent
+
+    from ajustelab.gui.personalizar import DialogoMarca, DialogoPersonalizar
+
+    def aceptar(d):
+        if not d.texto.text():
+            d.texto.setText("importante")
+        return QtWidgets.QDialog.Accepted
+
+    monkeypatch.setattr(DialogoMarca, "exec", aceptar)
+    ventana.abrir_ejemplo("carga")
+    esperar(app, ventana)
+    g = ventana.grafica
+    g.lienzo.draw()
+    s = g.escena.series[0]
+    px = g._ax.transData.transform((s.x[10], s.y[10]))
+    excluidas = set(ventana.panel_datos.modelo.excluidas)
+    g._activar_herramienta("marca_punto")
+    _px(g.lienzo, px[0] + 2, px[1] - 2, "button_press_event")
+    m = g.opciones.destacados[0]
+    assert m["tipo"] == "punto" and (m["x"], m["y"]) == (s.x[10], s.y[10])  # pegada al dato
+    assert g._herramienta is None and ventana.panel_datos.modelo.excluidas == excluidas
+    assert any(a.get_text() == "importante" for a in g._ax.texts)
+    # tramo arrastrando y líneas desde el menú contextual
+    g._activar_herramienta("marca_tramo")
+    g.lienzo.draw()
+    y = float(np.mean(g._ax.get_ylim()))
+    for tipo, xv in (("button_press_event", 6), ("motion_notify_event", 7), ("button_release_event", 8)):
+        _evento(g.lienzo, g._ax, xv, y, tipo, 1)
+    assert g.opciones.destacados[1]["tipo"] == "tramo"
+    assert g.opciones.destacados[1]["x"] == pytest.approx(6, abs=0.05)
+    bb = g._ax.bbox
+    ev = MouseEvent("button_press_event", g.lienzo, bb.x0 + 0.5 * bb.width, bb.y0 + 0.3 * bb.height, button=3)
+    acciones = {a.text(): a for a in g._menu_contextual(ev).actions()}
+    acciones["Línea horizontal aquí…"].trigger()
+    assert [d["tipo"] for d in g.opciones.destacados] == ["punto", "tramo", "horizontal"]
+    assert len(g.figura._ajustelab["destacados"]) == 3
+    # doble clic en la marca del punto: se edita
+    monkeypatch.setattr(DialogoMarca, "exec", lambda d: (d.texto.setText("máximo"), d.color.fijar("#00aa00"),
+                                                         QtWidgets.QDialog.Accepted)[-1])
+    g.lienzo.draw()
+    px = g._ax.transData.transform((s.x[10], s.y[10]))
+    _px(g.lienzo, px[0] + 9, px[1], "button_press_event", doble=True)  # en el aro, a 9 px del centro
+    assert g.opciones.destacados[0]["texto"] == "máximo" and g.opciones.destacados[0]["color"] == "#00aa00"
+    # la pestaña Marcas de Personalizar
+    dlg = DialogoPersonalizar(g.opciones, ventana, pestana="marcas")
+    assert dlg.lista_marcas.count() == 3 and "máximo" in dlg.lista_marcas.item(0).text()
+    dlg.lista_marcas.setCurrentRow(2)
+    dlg._quitar_marca()
+    assert len(dlg.opciones().destacados) == 2
+    dlg.close()
+    # en la sesión, y fuera al abrir otros datos
+    ruta = tmp_path / "marcas.ajustelab"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: (str(ruta), ""))
+    assert ventana.guardar_sesion()
+    ventana.nueva_sesion()
+    assert not g.opciones.destacados
+    assert ventana.abrir(ruta)
+    esperar(app, ventana)
+    assert len(g.opciones.destacados) == 3 and g.opciones.destacados[0]["texto"] == "máximo"
+    g.quitar_marca(2)
+    assert len(g.opciones.destacados) == 2
+    ventana.pila.setClean()
+    ventana.abrir_ejemplo("descarga")
+    esperar(app, ventana)
+    assert not g.opciones.destacados

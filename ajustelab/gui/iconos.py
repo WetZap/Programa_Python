@@ -225,6 +225,18 @@ def _cortar(p):  # eje x partido: dos tramos y «//»
     p.restore()
 
 
+def _marcar(p):  # diana: un punto señalado
+    p.drawEllipse(QPointF(12, 12), 7, 7)
+    p.save()
+    p.setBrush(p.pen().color())
+    p.drawEllipse(QPointF(12, 12), 2.2, 2.2)
+    p.restore()
+    p.drawLine(QPointF(12, 2), QPointF(12, 5))
+    p.drawLine(QPointF(12, 19), QPointF(12, 22))
+    p.drawLine(QPointF(2, 12), QPointF(5, 12))
+    p.drawLine(QPointF(19, 12), QPointF(22, 12))
+
+
 def _anadir(p):
     p.drawLine(QPointF(12, 5), QPointF(12, 19))
     p.drawLine(QPointF(5, 12), QPointF(19, 12))
@@ -235,7 +247,7 @@ _DIBUJOS: dict[str, _Dibujo] = {
     "pegar": _pegar, "copiar": _copiar, "exportar": _exportar, "ajustar": _ajustar, "region": _region,
     "rango": _rango, "personalizar": _personalizar, "seleccion": _seleccion, "ejemplo": _ejemplo,
     "info": _info, "quitar": _quitar, "estimar": _estimar, "usar": _flecha_abajo,
-    "representar": _representar, "anadir": _anadir, "cortar": _cortar,
+    "representar": _representar, "anadir": _anadir, "cortar": _cortar, "marcar": _marcar,
 }
 
 # Equivalencias con los iconos de tema de Qt ≥ 6.7 (nombre del enum) y freedesktop

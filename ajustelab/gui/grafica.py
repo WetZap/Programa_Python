@@ -33,7 +33,8 @@ from matplotlib.transforms import IdentityTransform
 from matplotlib.widgets import RectangleSelector, SpanSelector
 from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QCursor
-from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QInputDialog, QMenu, QToolButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (QCheckBox, QDialog, QHBoxLayout, QInputDialog, QMenu, QToolButton, QVBoxLayout,
+                               QWidget)
 
 from ..ajuste import ResultadoAjuste
 from ..datos import Datos
@@ -90,6 +91,17 @@ LOC_LEYENDA = {
 MARCAS = {"fuera": "Hacia fuera", "dentro": "Hacia dentro", "ambas": "A los dos lados"}
 NOTACION = {"auto": "Automática", "cientifica": "Científica (×10ⁿ)", "normal": "Sin exponente"}
 BORDES = {"completos": "Los cuatro lados", "abiertos": "Solo abajo y a la izquierda"}
+
+# Marcas para señalar puntos, tramos o valores en la gráfica (OpcionesGrafica.destacados)
+TIPOS_MARCA = {"punto": "Punto", "tramo": "Tramo de x", "vertical": "Línea vertical",
+               "horizontal": "Línea horizontal"}
+FORMAS_MARCA = {"o": "Círculo", "s": "Cuadrado", "D": "Rombo", "^": "Triángulo", "v": "Triángulo hacia abajo",
+                "*": "Estrella", "P": "Cruz", "X": "Aspa"}
+ESTILOS_LINEA = {"--": "Discontinua", "-": "Continua", ":": "Punteada", "-.": "Raya y punto"}
+MARCA_DEFECTO = {"tipo": "punto", "x": 0.0, "y": 0.0, "x2": 1.0, "texto": "", "color": "", "forma": "o",
+                 "tam": 14.0, "relleno": False, "estilo": "--", "grosor": 1.5, "alfa": 0.15, "leyenda": False,
+                 "eje": "izq"}
+COLOR_MARCA = {False: "#d6336c", True: "#ff6b9a"}  # por defecto (claro, oscuro): destaca sobre la paleta
 
 # Opciones que forman el «estilo» (se guardan en las plantillas). El resto
 # (textos, posiciones, límites, anotaciones) depende de cada gráfica.
@@ -158,10 +170,13 @@ class OpcionesGrafica:
     pos_cuadro: tuple[float, float] = (0.03, 0.04)  # esquina inferior izquierda, fracción de los ejes
     # Textos libres: {"texto", "x", "y" (fracción de la figura), "flecha": [x, y] en datos o None, "tam"}
     anotaciones: list = field(default_factory=list)
+    # Marcas en coordenadas de los datos (punto, tramo de x, línea vertical u horizontal): ver MARCA_DEFECTO
+    destacados: list = field(default_factory=list)
 
     def a_dict(self) -> dict:
         d = dict(self.__dict__)
         d["anotaciones"] = [dict(a) for a in self.anotaciones]
+        d["destacados"] = [dict(m) for m in self.destacados]
         return d
 
     @classmethod
@@ -174,6 +189,8 @@ class OpcionesGrafica:
                 v = tuple(v)
             elif k == "anotaciones":
                 v = [dict(a) for a in (v or []) if isinstance(a, dict) and "texto" in a]
+            elif k == "destacados":
+                v = [{**MARCA_DEFECTO, **m} for m in (v or []) if isinstance(m, dict) and m.get("tipo") in TIPOS_MARCA]
             setattr(o, k, v)
         return o
 
@@ -199,6 +216,7 @@ class OpcionesGrafica:
                   "y2_min", "y2_max", "titulo_leyenda"):
             setattr(self, k, getattr(base, k))
         self.anotaciones = []
+        self.destacados = []
 
     def escalada(self, tam_fuente: float) -> "OpcionesGrafica":
         """Copia con otro tamaño de letra; los tamaños propios (título, leyenda,
@@ -206,6 +224,7 @@ class OpcionesGrafica:
         f = tam_fuente / self.tam_fuente if self.tam_fuente else 1.0
         o = replace(self, tam_fuente=tam_fuente, tam_titulo=self.tam_titulo * f, tam_leyenda=self.tam_leyenda * f)
         o.anotaciones = [{**a, "tam": (a.get("tam") or 0) * f} for a in self.anotaciones]
+        o.destacados = [dict(m) for m in self.destacados]
         return o
 
     @property
@@ -468,6 +487,59 @@ def _limites(ax, o: OpcionesGrafica, x: bool = True, y: bool = True, ax_y2=None)
         poner(ax_y2.set_ylim, o.y2_min, o.y2_max, ax_y2.get_yscale() == "log")
 
 
+def _destacados(fig: Figure, o: OpcionesGrafica, c: dict, oscuro: bool, izq: list, der: list | None = None,
+                solo_puntos: bool = False) -> None:
+    """Marcas del usuario (puntos, tramos de x y líneas) en coordenadas de los datos.
+    ``izq``/``der``: ejes donde se dibujan (con el eje partido, uno por tramo); el
+    texto de un punto solo sale en los ejes que lo contienen."""
+    if not o.destacados or not izq:
+        return
+    lista = fig._ajustelab.setdefault("destacados", [])
+    for i, bruto in enumerate(o.destacados):
+        m = {**MARCA_DEFECTO, **bruto}
+        tipo = m["tipo"]
+        if solo_puntos and tipo != "punto":
+            continue
+        color = m["color"] or c.get("destacado") or COLOR_MARCA[oscuro]
+        texto = str(m["texto"] or "").strip()
+        en_leyenda = bool(m["leyenda"] and texto)
+        destinos = der if (m["eje"] == "der" and der) else izq
+        try:
+            x, y, x2 = float(m["x"]), (None if m["y"] is None else float(m["y"])), float(m["x2"])
+        except (TypeError, ValueError):
+            continue
+        for j, ax in enumerate(destinos):
+            etiqueta = texto if (en_leyenda and j == 0) else "_nolegend_"
+            kw_texto = dict(color=c["texto"], fontsize=o.tam_fuente * 0.9, zorder=7, clip_on=True)
+            if tipo == "punto" and y is not None:
+                (art,) = ax.plot([x], [y], linestyle="none", marker=m["forma"], ms=m["tam"], mew=2,
+                                 mfc=color if m["relleno"] else "none", mec=color, label=etiqueta, zorder=6)
+                art.set_pickradius(m["tam"] * 0.5 + 3)  # se coge haciendo clic en todo el aro
+                if texto and not en_leyenda:
+                    ax.annotate(texto, (x, y), xytext=(m["tam"] * 0.6 + 2, m["tam"] * 0.6 + 2),
+                                textcoords="offset points", **kw_texto)
+            elif tipo == "tramo":
+                art = ax.axvspan(min(x, x2), max(x, x2), color=color, alpha=m["alfa"], linewidth=0, label=etiqueta,
+                                 zorder=0.5)
+                if texto and not en_leyenda:
+                    ax.text((x + x2) / 2, 0.98, texto, transform=ax.get_xaxis_transform(), ha="center", va="top",
+                            **kw_texto)
+            elif tipo == "vertical":
+                art = ax.axvline(x, color=color, linestyle=m["estilo"], linewidth=m["grosor"], label=etiqueta,
+                                 zorder=4)
+                if texto and not en_leyenda:
+                    ax.text(x, 0.98, f" {texto}", transform=ax.get_xaxis_transform(), ha="left", va="top",
+                            **kw_texto)
+            elif tipo == "horizontal" and y is not None:
+                art = ax.axhline(y, color=color, linestyle=m["estilo"], linewidth=m["grosor"], label=etiqueta,
+                                 zorder=4)
+                if texto and not en_leyenda:
+                    ax.text(0.99, y, texto, transform=ax.get_yaxis_transform(), ha="right", va="bottom", **kw_texto)
+            else:
+                continue
+            lista.append((i, art))
+
+
 def _anotaciones(fig: Figure, ax, o: OpcionesGrafica, c: dict) -> None:
     """Textos libres (posición en fracción de la figura), con flecha opcional hacia
     un punto en coordenadas de los datos. No mueven el resto de la gráfica."""
@@ -538,6 +610,8 @@ def dibujar(fig: Figure, e: Escena, o: OpcionesGrafica, c: dict, oscuro: bool = 
         ax = e.especial.dibujar(fig, o, c, oscuro)
         if ax is not None:
             numericos = getattr(e.especial, "ejes_numericos", ())
+            if ax.name == "polar" or numericos:  # en sectores no hay coordenadas que señalar
+                _destacados(fig, o, c, oscuro, [ax], solo_puntos=ax.name == "polar")
             _limites(ax, o, x="x" in numericos, y="y" in numericos)
             _poner_titulo(fig, ax, o, c)
             if ax.name != "polar":
@@ -600,6 +674,7 @@ def dibujar(fig: Figure, e: Escena, o: OpcionesGrafica, c: dict, oscuro: bool = 
         ax.set_xscale("log")
     if o.log_y and (ys is None or np.all(ys > 0)):
         ax.set_yscale("log")
+    _destacados(fig, o, c, oscuro, [ax])
     _limites(ax, o)
     handles, labels = ax.get_legend_handles_labels()
     if o.leyenda and len(handles) >= 2:
@@ -759,6 +834,7 @@ def _dibujar_series(fig: Figure, e: Escena, o: OpcionesGrafica, c: dict, oscuro:
         for r in range(filas):
             for j in range(k - 1):
                 _marcas_corte(axs[r, j], axs[r, j + 1], c)
+    _destacados(fig, o, c, oscuro, destinos["izq"], destinos["der"])
     _poner_titulo(fig, ax, o, c, en_figura=k > 1)
     if k == 1:
         _limites(axs[-1, 0], o, x=True, y=False)
@@ -910,6 +986,22 @@ class Grafica(QWidget):
                                     "En la gráfica: arrastra el título, la leyenda, las etiquetas o los textos;\n"
                                     "doble clic para editarlos; clic derecho para añadir textos y flechas.")
         self._botones_herramienta = {"region": self.b_region, "rango": self.b_rango, "cortar": self.b_cortar}
+        self.b_marcar = QToolButton()
+        self.b_marcar.setIcon(icono("marcar"))
+        self.b_marcar.setText("Marcar")
+        self.b_marcar.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.b_marcar.setAutoRaise(True)
+        self.b_marcar.setPopupMode(QToolButton.InstantPopup)
+        self.b_marcar.setToolTip("Señala un punto, un tramo de x o un valor con una marca personalizable")
+        menu_marcar = QMenu(self)
+        menu_marcar.addAction("Un punto: haz clic en él", lambda: self._activar_herramienta("marca_punto"))
+        menu_marcar.addAction("Un tramo de x: arrastra en horizontal", lambda: self._activar_herramienta("marca_tramo"))
+        menu_marcar.addAction("Una línea vertical: haz clic", lambda: self._activar_herramienta("marca_vertical"))
+        menu_marcar.addAction("Una línea horizontal: haz clic",
+                              lambda: self._activar_herramienta("marca_horizontal"))
+        menu_marcar.addSeparator()
+        menu_marcar.addAction("Editar las marcas…", lambda: self.personalizarEn.emit("marcas"))
+        self.b_marcar.setMenu(menu_marcar)
         for nombre, b in self._botones_herramienta.items():
             b.toggled.connect(lambda on, n=nombre: self._activar_herramienta(n if on else None))
         self.b_personalizar.clicked.connect(self.personalizar)
@@ -924,7 +1016,7 @@ class Grafica(QWidget):
         fila = QHBoxLayout()
         fila.setContentsMargins(0, 0, 0, 0)
         fila.addWidget(self.barra)
-        for b in (self.b_region, self.b_rango, self.b_cortar, self.b_personalizar):
+        for b in (self.b_region, self.b_rango, self.b_cortar, self.b_marcar, self.b_personalizar):
             fila.addWidget(b)
         fila.addStretch(1)
         for cb in (self.ver_residuos, self.log_x, self.log_y):
@@ -961,8 +1053,8 @@ class Grafica(QWidget):
         # series x-y de «Representar»
         sin_ajuste = bool(escena.series) or escena.especial is not None
         modo_xy = bool(escena.series)
-        if self._herramienta and (sin_ajuste != (self._herramienta == "cortar") or (
-                self._herramienta == "cortar" and not modo_xy)):
+        h = self._herramienta
+        if (h in ("region", "rango") and sin_ajuste) or (h == "cortar" and not modo_xy):
             self._desactivar_herramientas()
         for w in (self.b_region, self.b_rango, self.ver_residuos):
             w.setEnabled(not sin_ajuste)
@@ -1025,6 +1117,8 @@ class Grafica(QWidget):
             b.blockSignals(True)
             b.setChecked(False)
             b.blockSignals(False)
+        if self._herramienta and self._herramienta.startswith("marca_"):
+            self.lienzo.unsetCursor()
         self._herramienta = None
         self._crear_selector()
 
@@ -1045,6 +1139,17 @@ class Grafica(QWidget):
                     ax, self._al_seleccionar_corte, "horizontal", useblit=True, button=[1], minspan=0,
                     interactive=False, props=dict(facecolor=c["secundario"], alpha=0.22)))
             self._selector = self._selectores[0] if self._selectores else None
+            return
+        if self._herramienta in ("marca_punto", "marca_vertical", "marca_horizontal"):
+            self.lienzo.setCursor(Qt.CrossCursor)  # el siguiente clic pone la marca
+            return
+        if self._herramienta == "marca_tramo":
+            ejes = getattr(self.figura, "_ajustelab", {}).get("ejes", {})
+            for ax in (ejes.get("izq") or [self._ax]):
+                self._selectores.append(SpanSelector(
+                    ax, self._al_seleccionar_tramo_marcado, "horizontal", useblit=True, button=[1], minspan=0,
+                    interactive=False, props=dict(facecolor=COLOR_MARCA[self.tema.oscuro], alpha=0.2)))
+            self._selector = self._selectores[0]
             return
         if self._herramienta == "region":
             self._selector = RectangleSelector(self._ax, self._al_seleccionar_region, useblit=True, button=[1],
@@ -1106,13 +1211,23 @@ class Grafica(QWidget):
         if e.series:
             # Todos los puntos de todas las series, cada uno con su eje; se recuerda
             # de qué serie y qué punto es cada uno.
+            info = getattr(self.figura, "_ajustelab", {})
+            ejes, limites, cortes = info.get("ejes"), info.get("limites") or [], info.get("cortes") or []
             trozos, indices = [], []
-            for k, serie in enumerate(e.series):
+            for k, serie in enumerate(e.series):  # vectorizado: miles de puntos sin bucles en Python
                 px = np.full((serie.x.size, 2), np.nan)
-                for j, (xv, yv) in enumerate(zip(serie.x, serie.y)):
-                    ax = self._ejes_de(serie, float(xv))
-                    if ax is not None:
-                        px[j] = ax.transData.transform((xv, yv))
+                xy = np.column_stack([serie.x, serie.y])
+                if not ejes:
+                    px[:] = self._ejes_de(serie).transData.transform(xy)
+                else:
+                    lista = ejes["der"] if (serie.eje == "der" and ejes.get("der")) else ejes["izq"]
+                    if len(lista) == 1 or not limites:
+                        vis = fuera_de_cortes(serie.x, cortes) if cortes else np.ones(serie.x.size, bool)
+                        px[vis] = lista[0].transData.transform(xy[vis])
+                    else:
+                        for ax, (lo, hi) in zip(lista, limites):
+                            m = (serie.x >= lo) & (serie.x <= hi) & np.isnan(px[:, 0])
+                            px[m] = ax.transData.transform(xy[m])
                 trozos.append(px)
                 indices.append(np.column_stack([np.full(serie.x.size, k), np.arange(serie.x.size)]))
             self._puntos_px = np.vstack(trozos) if trozos else None
@@ -1147,6 +1262,13 @@ class Grafica(QWidget):
         return self._cuadro is not None and self._cuadro.contains(evento)[0]
 
     def _al_pulsar(self, evento):
+        if self._herramienta in ("marca_punto", "marca_vertical", "marca_horizontal"):
+            if evento.button == 1 and evento.inaxes is not None:
+                tipo = self._herramienta[6:]
+                self._desactivar_herramientas()
+                self.lienzo.unsetCursor()
+                self.nueva_marca(tipo, evento)
+            return
         if self.barra.mode or self._herramienta:
             return
         if evento.button == 3 and not self.escena.vacia:
@@ -1154,6 +1276,11 @@ class Grafica(QWidget):
             return
         if evento.button != 1:
             return
+        if evento.dblclick:
+            i = self._marca_en(evento)
+            if i is not None:
+                self.editar_marca(i)
+                return
         el = self._elemento_en(evento)
         if el is not None:  # título, leyenda, etiqueta o texto: se arrastra (doble clic: se edita)
             if evento.dblclick:
@@ -1376,6 +1503,16 @@ class Grafica(QWidget):
             menu.addAction("Editar…", lambda: self.editar_elemento(el))
             menu.addAction("Devolver a su sitio", lambda: self._restablecer_posicion(el["clave"]))
             menu.addSeparator()
+        i_marca = self._marca_en(evento)
+        if i_marca is not None:
+            menu.addAction("Editar la marca…", lambda: self.editar_marca(i_marca))
+            menu.addAction(icono("quitar"), "Quitar la marca", lambda: self.quitar_marca(i_marca))
+            menu.addSeparator()
+        if evento.inaxes is not None:
+            menu.addAction(icono("marcar"), "Marcar este punto…", lambda: self.nueva_marca("punto", evento))
+            menu.addAction("Línea vertical aquí…", lambda: self.nueva_marca("vertical", evento))
+            menu.addAction("Línea horizontal aquí…", lambda: self.nueva_marca("horizontal", evento))
+            menu.addSeparator()
         menu.addAction("Añadir un texto aquí…", lambda: self.anadir_nota(fx, fy))
         if self._ax is not None and evento.inaxes is not None:
             xd, yd = (float(v) for v in self._ax.transData.inverted().transform((evento.x, evento.y)))
@@ -1431,3 +1568,69 @@ class Grafica(QWidget):
         self.opciones.restablecer_posiciones()
         self.opcionesCambiadas.emit()
         self.redibujar()
+
+    # -- marcas (puntos, tramos y líneas señalados) -------------------------------------
+    def _marca_en(self, evento) -> int | None:
+        for i, art in getattr(self.figura, "_ajustelab", {}).get("destacados", []):
+            try:
+                if art.contains(evento)[0]:
+                    return i
+            except (AttributeError, TypeError, ValueError, RuntimeError):
+                continue
+        return None
+
+    def _coordenadas_marca(self, tipo: str, evento) -> dict:
+        """Dónde va una marca nueva. Un punto se pega al dato más cercano (si el clic cae
+        sobre uno); si no, va donde se ha hecho clic."""
+        ax = evento.inaxes
+        ejes = getattr(self.figura, "_ajustelab", {}).get("ejes", {})
+        eje = "der" if ax in (ejes.get("der") or []) and not self.escena.apilados else "izq"
+        x, y = (float(v) for v in ax.transData.inverted().transform((evento.x, evento.y)))
+        if tipo == "punto":
+            i = self._punto_cercano(evento)
+            if i is not None:
+                if self._puntos_serie is not None:
+                    k, j = self._puntos_serie[i]
+                    s = self.escena.series[int(k)]
+                    x, y, eje = float(s.x[j]), float(s.y[j]), s.eje
+                elif self.escena.datos is not None:
+                    x, y = float(self.escena.datos.x[i]), float(self.escena.datos.y[i])
+        return {"tipo": tipo, "x": x, "y": y, "x2": x, "eje": eje}
+
+    def nueva_marca(self, tipo: str, evento=None, marca: dict | None = None) -> bool:
+        """Crea una marca (en el sitio del clic) y abre su diálogo para darle texto,
+        color, forma…; si se cancela, no se añade."""
+        from .personalizar import DialogoMarca
+
+        m = marca or self._coordenadas_marca(tipo, evento)
+        doble = bool(getattr(self.figura, "_ajustelab", {}).get("ejes", {}).get("der"))
+        dlg = DialogoMarca(m, self, "Marca nueva", doble_eje=doble)
+        if dlg.exec() != QDialog.Accepted:
+            return False
+        self.opciones.destacados.append(dlg.marca())
+        self.opcionesCambiadas.emit()
+        self.redibujar()
+        return True
+
+    def _al_seleccionar_tramo_marcado(self, lo, hi) -> None:
+        self._desactivar_herramientas()
+        if hi > lo:
+            self.nueva_marca("tramo", marca={"tipo": "tramo", "x": float(lo), "x2": float(hi), "y": None})
+
+    def editar_marca(self, i: int) -> None:
+        from .personalizar import DialogoMarca
+
+        if not 0 <= i < len(self.opciones.destacados):
+            return
+        doble = bool(getattr(self.figura, "_ajustelab", {}).get("ejes", {}).get("der"))
+        dlg = DialogoMarca(self.opciones.destacados[i], self, "Editar marca", doble_eje=doble)
+        if dlg.exec() == QDialog.Accepted:
+            self.opciones.destacados[i] = dlg.marca()
+            self.opcionesCambiadas.emit()
+            self.redibujar()
+
+    def quitar_marca(self, i: int) -> None:
+        if 0 <= i < len(self.opciones.destacados):
+            self.opciones.destacados.pop(i)
+            self.opcionesCambiadas.emit()
+            self.redibujar()

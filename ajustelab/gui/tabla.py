@@ -339,6 +339,8 @@ class ModeloTabla(QAbstractTableModel):
 
 
 class VistaTabla(QTableView):
+    guardarSeleccion = Signal()  # «Guardar estas filas como…» en el menú contextual
+
     def __init__(self, modelo: ModeloTabla, parent=None):
         super().__init__(parent)
         self.setModel(modelo)
@@ -358,6 +360,22 @@ class VistaTabla(QTableView):
         nombre, ok = QInputDialog.getText(self, "Renombrar columna", "Nuevo nombre:", text=m.nombres[columna])
         if ok:
             m.renombrar(columna, nombre)
+
+    def contextMenuEvent(self, evento):
+        from PySide6.QtWidgets import QMenu
+
+        menu = QMenu(self)
+        menu.addAction("Copiar", self.copiar)
+        menu.addAction("Pegar", self.pegar)
+        menu.addAction("Vaciar las celdas", lambda: self.model().borrar_celdas(self.selectedIndexes()))
+        filas = sorted({i.row() for i in self.selectedIndexes()})
+        menu.addSeparator()
+        borrar = menu.addAction(f"Borrar {len(filas)} fila{'s' if len(filas) != 1 else ''}",
+                                lambda: self.model().borrar_filas(filas))
+        borrar.setEnabled(bool(filas))
+        guardar = menu.addAction("Guardar estas filas como fichero nuevo…", self.guardarSeleccion.emit)
+        guardar.setEnabled(bool(filas))
+        menu.exec(evento.globalPos())
 
     def keyPressEvent(self, evento):
         if evento.matches(QKeySequence.Copy):
@@ -444,17 +462,33 @@ class PanelDatos(QWidget):
         for b in (b_fila, b_borrar, b_incluir):
             botones.addWidget(b)
 
-        self.b_quitar_rango = QPushButton(icono("quitar"), "Quitar rango")
+        # Rango de ajuste escrito a mano (también se elige arrastrando con «Rango» en la gráfica)
+        self.rango_desde = QLineEdit()
+        self.rango_hasta = QLineEdit()
+        for campo, texto in ((self.rango_desde, "desde"), (self.rango_hasta, "hasta")):
+            campo.setPlaceholderText(texto)
+            campo.setToolTip("Rango de x que se usa en el ajuste. Vacío: desde el primer valor o hasta el último. "
+                             "Intro para aplicarlo.")
+            campo.returnPressed.connect(self.aplicar_rango_escrito)
+        self.b_aplicar_rango = QPushButton("Aplicar")
+        self.b_aplicar_rango.setToolTip("Ajustar solo los puntos con x en este rango (se puede deshacer)")
+        self.b_aplicar_rango.clicked.connect(self.aplicar_rango_escrito)
+        self.b_quitar_rango = QPushButton(icono("quitar"), "")
+        self.b_quitar_rango.setToolTip("Quitar el rango: se usan todos los puntos")
         self.b_quitar_rango.clicked.connect(lambda: self.modelo.fijar_rango(None))
+        self.b_quitar_rango.setEnabled(False)
         fila_rango = QHBoxLayout()
-        fila_rango.addWidget(self.aviso_rango, 1)
+        fila_rango.addWidget(self.rango_desde, 1)
+        fila_rango.addWidget(QLabel("–"))
+        fila_rango.addWidget(self.rango_hasta, 1)
+        fila_rango.addWidget(self.b_aplicar_rango)
         fila_rango.addWidget(self.b_quitar_rango)
-        self.b_quitar_rango.setVisible(False)
+        formulario.addRow("Rango x:", fila_rango)
 
         capa = QVBoxLayout(self)
         capa.addWidget(self.info)
         capa.addLayout(formulario)
-        capa.addLayout(fila_rango)
+        capa.addWidget(self.aviso_rango)
         capa.addWidget(self.vista, 1)
         capa.addLayout(botones)
 
@@ -530,10 +564,41 @@ class PanelDatos(QWidget):
     def _mostrar_rango(self) -> None:
         r = self.modelo.rango_x
         self.aviso_rango.setVisible(r is not None)
-        self.b_quitar_rango.setVisible(r is not None)
+        self.b_quitar_rango.setEnabled(r is not None)
+        for campo, valor in ((self.rango_desde, None if r is None else r[0]),
+                             (self.rango_hasta, None if r is None else r[1])):
+            campo.setText("" if valor is None else f"{valor:.10g}")
         if r is not None:
-            self.aviso_rango.setText(f"Rango de ajuste: {r[0]:.6g} ≤ x ≤ {r[1]:.6g}")
+            x = self.modelo.x_actual
+            dentro = ""
+            if x is not None and len(x):
+                validos = np.isfinite(x)
+                n = int(np.sum(validos & (x >= r[0]) & (x <= r[1])))
+                dentro = f" — {n} de {int(validos.sum())} puntos"
+            self.aviso_rango.setText(f"Rango de ajuste: {r[0]:.6g} ≤ x ≤ {r[1]:.6g}{dentro}")
         self.vista.viewport().update()
+
+    def aplicar_rango_escrito(self) -> None:
+        """Rango de x escrito en «desde»/«hasta» (vacío: el extremo de los datos)."""
+        textos = (self.rango_desde.text().strip(), self.rango_hasta.text().strip())
+        if not any(textos):
+            self.modelo.fijar_rango(None)
+            return
+        try:
+            lo, hi = (float(t.replace(",", ".")) if t else None for t in textos)
+        except ValueError:
+            self.aviso_rango.setText("El rango tiene que ser numérico, p. ej. 0 – 100.")
+            self.aviso_rango.setVisible(True)
+            return
+        x = self.modelo.x_actual
+        x = x[np.isfinite(x)] if x is not None else np.array([])
+        if lo is None:
+            lo = float(x.min()) if x.size else -np.inf
+        if hi is None:
+            hi = float(x.max()) if x.size else np.inf
+        if not (np.isfinite(lo) and np.isfinite(hi)):
+            return
+        self.modelo.fijar_rango((lo, hi))
 
     # -- asignación (para guardar/abrir sesiones) ---------------------------
     def asignacion(self) -> dict:

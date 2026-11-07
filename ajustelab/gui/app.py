@@ -33,7 +33,8 @@ from .personalizar import DialogoPersonalizar, opciones_nuevas  # noqa: E402
 from .estilo import hoja_estilo  # noqa: E402
 from .grafica import Escena, Grafica, con_coma  # noqa: E402
 from .iconos import icono, icono_aplicacion  # noqa: E402
-from .paneles import PanelAjuste, PanelInterpolacion, PanelInterseccion, PanelSeleccion  # noqa: E402
+from .panel_interpolacion import PanelInterpolacion  # noqa: E402
+from .paneles import PanelAjuste, PanelInterseccion, PanelSeleccion  # noqa: E402
 from .representar import PanelRepresentar  # noqa: E402
 from .tabla import NINGUNA, PanelDatos  # noqa: E402
 from .tema import GestorTema  # noqa: E402
@@ -93,6 +94,7 @@ class VentanaPrincipal(QMainWindow):
         # --- datos y gráfica
         self.panel_datos = PanelDatos()
         self.panel_datos.modelo.pila = self.pila
+        self.panel_datos.vista.guardarSeleccion.connect(lambda: self.guardar_datos(solo_seleccion=True))
         self.grafica = Grafica(tema)
         self.grafica.opciones = opciones_nuevas(self.ajustes)  # con el estilo predeterminado del usuario
         self.bienvenida = Bienvenida(ejemplos.nombres())
@@ -210,7 +212,7 @@ class VentanaPrincipal(QMainWindow):
         self.a_copiar_graf = A("Copiar gráfica", self.copiar_grafica, QKeySequence("Ctrl+Shift+C"), "copiar",
                                "Copia la gráfica al portapapeles (estilo de publicación)")
         self.a_informe = A("Guardar &informe…", self.guardar_informe)
-        self.a_tabla = A("Exportar &tabla (CSV)…", self.exportar_tabla)
+        self.a_tabla = A("&Guardar datos como… (todo o una parte)", self.guardar_datos, "Ctrl+Shift+D")
         self.a_salir = A("&Salir", self.close, QKeySequence.Quit)
         self.a_deshacer = self.pila.createUndoAction(self, "Deshacer")
         self.a_deshacer.setShortcuts(QKeySequence.Undo)
@@ -732,11 +734,44 @@ class VentanaPrincipal(QMainWindow):
             Path(ruta).write_text(texto + "\n", encoding="utf-8")
             self.notificar(f"Informe guardado en {ruta}", "bueno")
 
-    def exportar_tabla(self) -> None:
-        ruta, _ = QFileDialog.getSaveFileName(self, "Exportar tabla", "datos.csv", "CSV (*.csv)")
-        if ruta:
-            self.panel_datos.modelo.a_dataframe(con_texto=True).to_csv(ruta, index=False)
-            self.notificar(f"Tabla guardada en {ruta}", "bueno")
+    def guardar_datos(self, solo_seleccion: bool = False) -> bool:
+        """Guarda la tabla, o una parte (filas por rango de x, por número, las
+        seleccionadas…; columnas a elegir), como fichero nuevo."""
+        from ..datos import FORMATOS_GUARDAR, guardar_tabla
+        from .guardar_datos import DialogoGuardarDatos
+
+        m = self.panel_datos.modelo
+        if m.rowCount() == 0:
+            self.notificar("No hay datos que guardar.", "aviso")
+            return False
+        seleccion = sorted({i.row() for i in self.panel_datos.vista.selectedIndexes()})
+        dlg = DialogoGuardarDatos(m, seleccion, self.panel_datos.combos["x"].currentText(), self)
+        if solo_seleccion and seleccion:
+            dlg.modo.setCurrentIndex(dlg.modo.findData("seleccion"))
+        if dlg.exec() != QDialog.Accepted:
+            return False
+        formato = dlg.formato.currentData()
+        nombre_formato, ext = FORMATOS_GUARDAR[formato]
+        base = self._ruta_datos.stem if self._ruta_datos else "datos"
+        ruta, _ = QFileDialog.getSaveFileName(self, "Guardar datos", str(Path.cwd() / f"{base}_parte{ext}"),
+                                              f"{nombre_formato} (*{ext})")
+        if not ruta:
+            return False
+        if not ruta.lower().endswith(ext):
+            ruta += ext
+        tabla = dlg.tabla()
+        try:
+            guardar_tabla(tabla, ruta, formato)
+        except (OSError, ValueError, ErrorDatos) as e:
+            self.mostrar_error(f"No se ha podido guardar: {e}")
+            return False
+        self.notificar(f"{len(tabla)} filas × {tabla.shape[1]} columnas guardadas en {Path(ruta).name}", "bueno")
+        if dlg.abrir_despues.isChecked():
+            self.abrir(ruta)
+        return True
+
+    def exportar_tabla(self) -> None:  # nombre anterior
+        self.guardar_datos()
 
     # ---------------------------------------------------------- disposición
     def restablecer_disposicion(self) -> None:
