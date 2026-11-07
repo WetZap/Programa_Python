@@ -217,7 +217,7 @@ def test_clic_region_rango_y_deshacer(app, ventana):
 
 
 def test_cuadro_resultados_y_personalizar(app, ventana):
-    from ajustelab.gui.dialogos import DialogoPersonalizar
+    from ajustelab.gui.personalizar import DialogoPersonalizar
 
     abrir_y_ajustar(app, ventana)
     assert ventana.grafica._cuadro is not None
@@ -902,3 +902,255 @@ def test_tipos_en_sesion_y_exportacion(app, ventana, tmp_path, monkeypatch):
             assert (tmp_path / f"{tipo}.{ext}").stat().st_size > 1000
         rutas = guardar_tablas(e, tmp_path / f"{tipo}.png")
         assert rutas and all(r.exists() and " " not in r.name for r in rutas)
+
+
+# --- personalización: opciones, arrastrar y editar, plantillas -----------------------
+def _dibujo(opciones, escena=None):
+    """Figura de la escena de ajuste de ejemplo dibujada con ``opciones``."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.figure import Figure
+
+    from ajustelab.ajuste import ajustar
+    from ajustelab.datos import cargar
+    from ajustelab.gui.grafica import COLORES_PUBLICACION, Escena, dibujar
+
+    if escena is None:
+        d = cargar(EJEMPLO)
+        escena = Escena(datos=d, ajuste=ajustar(d, "exponencial_fondo"), filas=np.arange(d.n_total))
+    fig = Figure(figsize=(6.4, 4.8), layout="constrained")
+    FigureCanvasAgg(fig)
+    ax, axr, _ = dibujar(fig, escena, opciones, COLORES_PUBLICACION, False)
+    fig.canvas.draw()
+    return fig, ax, axr
+
+
+def test_opciones_de_dibujo():
+    from ajustelab.gui.grafica import OpcionesGrafica
+
+    o = OpcionesGrafica(titulo="Descarga", alin_titulo="left", titulo_negrita=True, tam_titulo=15,
+                        marcas="dentro", marcas_espejo=True, marcas_menores=True, rejilla=False, notacion="cientifica",
+                        x_min=0, x_max=7, y_min=0.1, loc_leyenda="upper left", leyenda_columnas=2,
+                        titulo_leyenda="Leyenda", leyenda_marco=False, tam_marcador=8, grosor_ajuste=3.5,
+                        color_ajuste="#2a9d8f", residuos=False,
+                        anotaciones=[{"texto": "nota", "x": 0.7, "y": 0.2, "flecha": None, "tam": 0},
+                                     {"texto": "flecha", "x": 0.5, "y": 0.6, "flecha": [2.0, 2.0], "tam": 12}])
+    fig, ax, _ = _dibujo(o)
+    t = ax._left_title
+    assert t.get_text() == "Descarga" and t.get_fontweight() == "bold" and t.get_fontsize() == 15
+    p = ax.xaxis.get_tick_params()
+    assert p["direction"] == "in" and p["top"] and ax.yaxis.get_tick_params()["right"]
+    assert len(ax.xaxis.get_minorticklocs()) > 0 and not ax.xaxis._major_tick_kw.get("gridOn", False)
+    assert ax.get_xlim() == (0, 7) and ax.get_ylim()[0] == 0.1
+    assert ax.yaxis.get_major_formatter()._useMathText
+    ley = ax.get_legend()
+    assert ley._loc == 2 and ley._ncols == 2 and ley.get_title().get_text() == "Leyenda" and not ley.get_frame_on()
+    curva = [l for l in ax.get_lines() if l.get_label().startswith("Ajuste")][0]
+    assert curva.get_linewidth() == 3.5 and curva.get_color() == "#2a9d8f"
+    textos = [t.get_text() for t in fig.texts] + [c.get_text() for c in ax.texts]
+    assert "nota" in textos and "flecha" in textos
+    claves = {m["clave"] for m in fig._ajustelab["movibles"]}
+    assert {"titulo", "leyenda", "etiqueta_x", "etiqueta_y", "nota:0", "nota:1"} <= claves
+    # posiciones arrastradas, leyenda fuera y bordes abiertos
+    o = OpcionesGrafica(titulo="T", pos_titulo=(0.3, 0.8, "ejes"), pos_leyenda=(0.05, 0.1, "ejes"),
+                        pos_etiqueta_y=(-0.1, 0.3, "ejes"), bordes="abiertos", residuos=False)
+    fig, ax, _ = _dibujo(o)
+    assert np.allclose(ax.title.get_position(), (0.3, 0.8)) and ax.get_legend()._loc == (0.05, 0.1)
+    assert np.allclose(ax.yaxis.label.get_position(), (-0.1, 0.3))
+    assert not ax.spines["top"].get_visible() and not ax.spines["right"].get_visible()
+    fig, ax, _ = _dibujo(OpcionesGrafica(loc_leyenda="outside right upper", residuos=False))
+    assert ax.get_legend() is None and len(fig.legends) == 1
+    # la exportación con otra letra escala también el título, la leyenda y los textos
+    o = OpcionesGrafica(tam_titulo=20, tam_leyenda=10, anotaciones=[{"texto": "a", "x": 0.5, "y": 0.5, "tam": 12}])
+    e = o.escalada(5.0)
+    assert e.tam_titulo == 10 and e.tam_leyenda == 5 and e.anotaciones[0]["tam"] == 6 and o.tam_titulo == 20
+    # sesiones: las tuplas vuelven como tuplas
+    o2 = OpcionesGrafica.desde_dict(OpcionesGrafica(pos_leyenda=(0.1, 0.2, "figura")).a_dict()
+                                    | {"pos_titulo": [0.5, 0.9, "ejes"], "desconocida": 1})
+    assert o2.pos_leyenda == (0.1, 0.2, "figura") and o2.pos_titulo == (0.5, 0.9, "ejes")
+
+
+def _px(lienzo, x, y, tipo, boton=1, doble=False):
+    """MouseEvent en píxeles del lienzo."""
+    from matplotlib.backend_bases import MouseEvent
+
+    ev = MouseEvent(tipo, lienzo, x, y, button=boton, dblclick=doble)
+    ev._process()
+    return ev
+
+
+def _arrastrar(g, clave, dx, dy):
+    from matplotlib.text import Text
+
+    g.lienzo.draw()
+    el = next(e for e in g._movibles() if e["clave"] == clave)
+    art = el["artista"]
+    b = Text.get_window_extent(art) if clave.startswith("nota") else art.get_window_extent()
+    x, y = (b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2
+    _px(g.lienzo, x, y, "button_press_event")
+    _px(g.lienzo, x + dx / 2, y + dy / 2, "motion_notify_event")
+    _px(g.lienzo, x + dx, y + dy, "motion_notify_event")
+    _px(g.lienzo, x + dx, y + dy, "button_release_event")
+    g.lienzo.draw()
+    return x, y
+
+
+def test_arrastrar_y_editar_en_la_grafica(app, ventana, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QInputDialog
+
+    abrir_y_ajustar(app, ventana)
+    g = ventana.grafica
+    g.opciones.titulo = "Descarga"
+    g.redibujar()
+    excluidas = set(ventana.panel_datos.modelo.excluidas)
+    _arrastrar(g, "leyenda", -250, -60)
+    assert g.opciones.pos_leyenda is not None and g.opciones.pos_leyenda[2] == "ejes"
+    _arrastrar(g, "titulo", -120, -50)
+    assert g.opciones.pos_titulo is not None
+    _arrastrar(g, "etiqueta_y", 0, 60)
+    assert g.opciones.pos_etiqueta_y is not None
+    assert ventana.panel_datos.modelo.excluidas == excluidas  # arrastrar no excluye puntos
+    # tras redibujar, la leyenda sigue donde se dejó
+    ley = g._ax.get_legend()
+    assert ley._loc == pytest.approx(g.opciones.pos_leyenda[:2])
+    # doble clic en el título: se edita
+    monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: ("Descarga RC", True))
+    el = next(e for e in g._movibles() if e["clave"] == "titulo")
+    b = el["artista"].get_window_extent()
+    _px(g.lienzo, (b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2, "button_press_event", doble=True)
+    assert g.opciones.titulo == "Descarga RC"
+    # doble clic en la leyenda: abre «Personalizar» en su pestaña
+    pedidas = []
+    g.personalizarEn.disconnect()
+    g.personalizarEn.connect(pedidas.append)
+    g.lienzo.draw()
+    b = g._ax.get_legend().get_window_extent()
+    _px(g.lienzo, (b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2, "button_press_event", doble=True)
+    assert pedidas == ["leyenda"]
+    # menú contextual: texto libre y flecha
+    g.lienzo.draw()
+    bb = g._ax.bbox
+    from matplotlib.backend_bases import MouseEvent
+
+    ev = MouseEvent("button_press_event", g.lienzo, bb.x0 + 0.3 * bb.width, bb.y0 + 0.5 * bb.height, button=3)
+    acciones = {a.text(): a for a in g._menu_contextual(ev).actions()}
+    assert "Añadir un texto aquí…" in acciones and "Añadir una flecha que señale aquí…" in acciones
+    monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: ("Pico", True))
+    acciones["Añadir una flecha que señale aquí…"].trigger()
+    nota = g.opciones.anotaciones[-1]
+    assert nota["texto"] == "Pico" and nota["flecha"] is not None
+    assert any(c.get_text() == "Pico" for c in g._ax.texts)
+    x0 = nota["x"]
+    _arrastrar(g, "nota:0", 60, 0)
+    assert g.opciones.anotaciones[0]["x"] > x0
+    # la sesión guarda posiciones y textos
+    ruta = tmp_path / "personalizada.ajustelab"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: (str(ruta), ""))
+    assert ventana.guardar_sesion()
+    pos = g.opciones.pos_leyenda
+    ventana.nueva_sesion()
+    assert g.opciones.pos_leyenda is None and not g.opciones.anotaciones and g.opciones.titulo == ""
+    assert ventana.abrir(ruta)
+    esperar(app, ventana)
+    assert g.opciones.pos_leyenda == pytest.approx(pos) and g.opciones.anotaciones[0]["texto"] == "Pico"
+    assert g.opciones.titulo == "Descarga RC"
+    # otros datos: fuera textos y notas; el estilo y las posiciones se quedan
+    ventana.pila.setClean()
+    ventana.abrir_ejemplo("carga")
+    esperar(app, ventana)
+    assert g.opciones.titulo == "" and not g.opciones.anotaciones and g.opciones.pos_leyenda is not None
+    # «Restablecer las posiciones»
+    g.restablecer_posiciones()
+    assert g.opciones.pos_leyenda is None and g.opciones.pos_titulo is None
+
+
+def test_dialogo_personalizar_y_plantillas(app, ventana, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QInputDialog
+
+    from ajustelab.gui.grafica import OpcionesGrafica
+    from ajustelab.gui.personalizar import (DialogoPersonalizar, estilo_predeterminado, fijar_estilo_predeterminado,
+                                            opciones_nuevas, plantillas_usuario)
+
+    ajustes = QSettings(str(tmp_path / "ajustes.ini"), QSettings.IniFormat)
+    o = OpcionesGrafica(pos_leyenda=(0.1, 0.1, "ejes"), anotaciones=[{"texto": "a", "x": 0.2, "y": 0.3}])
+    aplicadas = []
+    dlg = DialogoPersonalizar(o, ventana, pestana="leyenda", al_aplicar=aplicadas.append, ajustes=ajustes)
+    assert dlg.pestanas.currentIndex() == 2 and "a mano" in dlg.aviso_leyenda.text()
+    dlg.aplicar_plantilla("Revista (física)")  # la plantilla pone todo el estilo (también la leyenda)
+    dlg.limites["x_min"].setText("0,5")
+    dlg.limites["y_max"].setText("abc")  # no es un número: automático
+    dlg.loc_leyenda.setCurrentIndex(dlg.loc_leyenda.findData("lower right"))
+    dlg.loc_leyenda.activated.emit(dlg.loc_leyenda.currentIndex())
+    dlg._anadir_nota({"texto": "b", "x": 0.6, "y": 0.6})
+    dlg.notas.cellWidget(1, 2).setText("1")
+    dlg.notas.cellWidget(1, 3).setText("2,5")
+    nueva = dlg.opciones()
+    assert nueva.x_min == 0.5 and nueva.y_max is None and nueva.loc_leyenda == "lower right"
+    assert nueva.pos_leyenda is None and nueva.marcas == "dentro" and nueva.marcas_espejo and not nueva.rejilla
+    assert nueva.anotaciones[1]["flecha"] == [1.0, 2.5] and nueva.anotaciones[0]["x"] == 0.2
+    assert o.marcas == "fuera"  # el original no cambia hasta aplicar
+    dlg._aplicar_ya()
+    assert aplicadas == [dlg]
+    # plantilla propia y estilo predeterminado
+    dlg.tam_fuente.setValue(13)
+    monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: ("Mi estilo", True))
+    dlg._guardar_plantilla()
+    assert plantillas_usuario(ajustes)["Mi estilo"]["tam_fuente"] == 13
+    assert "titulo" not in plantillas_usuario(ajustes)["Mi estilo"]  # solo el estilo
+    dlg._fijar_predeterminado()
+    assert estilo_predeterminado(ajustes)["marcas"] == "dentro"
+    assert opciones_nuevas(ajustes).tam_fuente == 13 and opciones_nuevas(ajustes).titulo == ""
+    dlg.aplicar_plantilla("Por defecto")
+    assert dlg.opciones().tam_fuente == 10 and dlg.opciones().marcas == "fuera"
+    dlg.aplicar_plantilla("Mi estilo")
+    assert dlg.opciones().tam_fuente == 13
+    item = dlg.lista_plantillas.findItems("Mi estilo  (tuya)", Qt.MatchExactly)[0]
+    dlg.lista_plantillas.setCurrentItem(item)
+    dlg._borrar_plantilla()
+    assert "Mi estilo" not in plantillas_usuario(ajustes)
+    dlg._restablecer()
+    assert dlg.opciones().x_min is None and not dlg.opciones().anotaciones
+    dlg.close()
+    # la ventana usa el estilo predeterminado en las sesiones nuevas
+    fijar_estilo_predeterminado({"marcas": "dentro", "tam_fuente": 12.0}, ventana.ajustes)
+    try:
+        ventana.nueva_sesion()
+        assert ventana.grafica.opciones.marcas == "dentro" and ventana.grafica.opciones.tam_fuente == 12
+    finally:
+        fijar_estilo_predeterminado(None, ventana.ajustes)
+
+
+def test_personalizar_en_todos_los_tipos(app, ventana):
+    """Marcas, límites, título y leyenda movidos no rompen ningún tipo de gráfica."""
+    from ajustelab.gui.grafica import OpcionesGrafica
+
+    o = OpcionesGrafica(titulo="Título", marcas="dentro", marcas_espejo=True, marcas_menores=True,
+                        rejilla_menor=True, notacion="cientifica", y_min=0, pos_leyenda=(0.6, 0.6, "figura"),
+                        pos_titulo=(0.5, 0.97, "figura"), loc_leyenda="outside lower center",
+                        anotaciones=[{"texto": "nota", "x": 0.5, "y": 0.5, "flecha": [1, 1]}])
+    ventana.grafica.fijar_opciones(o)
+    ventana.abrir_ejemplo("medidas")
+    esperar(app, ventana)
+    o = ventana.grafica.opciones
+    assert o.marcas == "dentro" and not o.anotaciones  # al cargar datos: fuera las notas, el estilo se queda
+    o.anotaciones = [{"texto": "nota", "x": 0.5, "y": 0.5, "flecha": [1, 1]}]
+    o.titulo = "Título"
+    p = ventana.p_repr
+    for tipo in ("histograma", "barras", "circular", "cajas", "polar", "xy"):
+        p.tipo.setCurrentIndex(p.tipo.findData(tipo))
+        esperar(app, ventana, 3)
+        g = ventana.grafica
+        g.redibujar()
+        g.lienzo.draw()
+        claves = {m["clave"] for m in g._movibles()}
+        assert {"nota:0", "titulo"} <= claves, tipo
+    ventana.abrir_ejemplo("dos_tandas")  # eje partido: título y etiqueta x de la figura
+    esperar(app, ventana)
+    g = ventana.grafica
+    g.opciones.titulo = "Dos tandas"
+    g.redibujar()
+    _arrastrar(g, "titulo", 0, -30)
+    _arrastrar(g, "etiqueta_x", 80, 0)
+    assert g.opciones.pos_titulo[2] == "figura" and g.opciones.pos_etiqueta_x[2] == "figura"

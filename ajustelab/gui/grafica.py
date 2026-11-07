@@ -11,6 +11,9 @@
 * Cuadro de resultados (ecuación + parámetros + χ²_ν) que se puede arrastrar.
 * Vista previa del modelo con los valores iniciales, comparación de varios
   ajustes, banda de confianza o de predicción.
+* Personalización: el título, la leyenda, las etiquetas de los ejes y los textos
+  libres se arrastran (``fig._ajustelab["movibles"]``) y sus posiciones, junto con
+  límites, marcas, tamaños, colores y plantillas de estilo, van en ``OpcionesGrafica``.
 * Modo «Representar» (sin ajuste): varias series frente a una misma x, en el eje
   izquierdo o en el derecho (o en dos paneles apilados), con o sin barras de error,
   y con el eje x partido (cortes «//») para saltarse tramos sin datos.
@@ -20,7 +23,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
@@ -29,7 +32,8 @@ from matplotlib.patches import Ellipse
 from matplotlib.transforms import IdentityTransform
 from matplotlib.widgets import RectangleSelector, SpanSelector
 from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QToolButton, QVBoxLayout, QWidget
+from PySide6.QtGui import QCursor
+from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QInputDialog, QMenu, QToolButton, QVBoxLayout, QWidget
 
 from ..ajuste import ResultadoAjuste
 from ..datos import Datos
@@ -68,32 +72,149 @@ def con_coma(texto: str) -> str:
     return _RE_DECIMAL.sub(",", texto)
 
 
+LOC_LEYENDA = {
+    "auto": "Automática",
+    "upper right": "Arriba a la derecha",
+    "upper left": "Arriba a la izquierda",
+    "lower right": "Abajo a la derecha",
+    "lower left": "Abajo a la izquierda",
+    "upper center": "Arriba, en el centro",
+    "lower center": "Abajo, en el centro",
+    "center right": "A la derecha, en el centro",
+    "center left": "A la izquierda, en el centro",
+    "center": "En el centro",
+    "outside right upper": "Fuera, a la derecha",
+    "outside upper center": "Fuera, encima",
+    "outside lower center": "Fuera, debajo",
+}
+MARCAS = {"fuera": "Hacia fuera", "dentro": "Hacia dentro", "ambas": "A los dos lados"}
+NOTACION = {"auto": "Automática", "cientifica": "Científica (×10ⁿ)", "normal": "Sin exponente"}
+BORDES = {"completos": "Los cuatro lados", "abiertos": "Solo abajo y a la izquierda"}
+
+# Opciones que forman el «estilo» (se guardan en las plantillas). El resto
+# (textos, posiciones, límites, anotaciones) depende de cada gráfica.
+CLAVES_ESTILO = (
+    "tam_fuente", "tam_titulo", "titulo_negrita", "alin_titulo", "leyenda", "loc_leyenda", "leyenda_columnas",
+    "leyenda_marco", "tam_leyenda", "rejilla", "rejilla_menor", "marcas", "marcas_espejo", "marcas_menores",
+    "bordes", "notacion", "tam_marcador", "grosor_linea", "grosor_ajuste", "grosor_error", "tam_tapa",
+    "color_datos", "color_ajuste", "cuadro_resultados",
+)
+_POSICIONES = ("pos_titulo", "pos_etiqueta_x", "pos_etiqueta_y", "pos_etiqueta_y2", "pos_leyenda")
+
+
 @dataclass
 class OpcionesGrafica:
+    # Textos (admiten LaTeX entre $…$)
     titulo: str = ""
     etiqueta_x: str = ""  # vacío: nombre de la columna
     etiqueta_y: str = ""
+    etiqueta_y2: str = ""  # eje y derecho (o panel inferior) en «Representar»
     tam_fuente: float = 10.0
+    tam_titulo: float = 0.0  # 0: 1.15 × tam_fuente
+    titulo_negrita: bool = False
+    alin_titulo: str = "center"  # left, center, right
+    # Posiciones arrastradas: (x, y, sistema), con sistema «ejes» (fracción de los
+    # ejes) o «figura» (fracción de la figura). None: la automática.
+    pos_titulo: tuple | None = None
+    pos_etiqueta_x: tuple | None = None
+    pos_etiqueta_y: tuple | None = None
+    pos_etiqueta_y2: tuple | None = None
+    # Leyenda
     leyenda: bool = True
+    loc_leyenda: str = "auto"  # ver LOC_LEYENDA
+    pos_leyenda: tuple | None = None  # esquina inferior izquierda (x, y, sistema)
+    leyenda_columnas: int = 1
+    leyenda_marco: bool = True
+    tam_leyenda: float = 0.0  # 0: 0.85 × tam_fuente
+    titulo_leyenda: str = ""
+    # Ejes
     rejilla: bool = True
-    cuadro_resultados: bool = True
-    pos_cuadro: tuple[float, float] = (0.03, 0.04)  # esquina inferior izquierda, fracción de los ejes
+    rejilla_menor: bool = False
+    marcas: str = "fuera"  # ver MARCAS
+    marcas_espejo: bool = False  # marcas también arriba y a la derecha
+    marcas_menores: bool = False
+    bordes: str = "completos"  # ver BORDES
+    notacion: str = "auto"  # ver NOTACION
+    x_min: float | None = None
+    x_max: float | None = None
+    y_min: float | None = None
+    y_max: float | None = None
+    y2_min: float | None = None
+    y2_max: float | None = None
     log_x: bool = False
     log_y: bool = False
-    residuos: bool = True
-    etiqueta_y2: str = ""  # eje y derecho (o panel inferior) en «Representar»
     log_y2: bool = False
+    residuos: bool = True
+    # Datos y curvas
+    tam_marcador: float = 5.0
+    grosor_linea: float = 1.6  # series de «Representar»
+    grosor_ajuste: float = 2.0  # curvas ajustadas e interpolantes
+    grosor_error: float = 1.0
+    tam_tapa: float = 2.0  # tope de las barras de error
+    color_datos: str = ""  # vacío: el del tema
+    color_ajuste: str = ""
+    # Cuadro de resultados y anotaciones
+    cuadro_resultados: bool = True
+    pos_cuadro: tuple[float, float] = (0.03, 0.04)  # esquina inferior izquierda, fracción de los ejes
+    # Textos libres: {"texto", "x", "y" (fracción de la figura), "flecha": [x, y] en datos o None, "tam"}
+    anotaciones: list = field(default_factory=list)
 
     def a_dict(self) -> dict:
-        return dict(self.__dict__)
+        d = dict(self.__dict__)
+        d["anotaciones"] = [dict(a) for a in self.anotaciones]
+        return d
 
     @classmethod
     def desde_dict(cls, d: dict) -> "OpcionesGrafica":
         o = cls()
         for k, v in (d or {}).items():
-            if hasattr(o, k):
-                setattr(o, k, tuple(v) if k == "pos_cuadro" else v)
+            if not hasattr(o, k):
+                continue
+            if k in ("pos_cuadro", *_POSICIONES) and v is not None:
+                v = tuple(v)
+            elif k == "anotaciones":
+                v = [dict(a) for a in (v or []) if isinstance(a, dict) and "texto" in a]
+            setattr(o, k, v)
         return o
+
+    def estilo(self) -> dict:
+        return {k: getattr(self, k) for k in CLAVES_ESTILO}
+
+    def aplicar_estilo(self, estilo: dict) -> None:
+        """Pone el estilo por defecto y encima el de ``estilo`` (una plantilla)."""
+        base = OpcionesGrafica()
+        for k in CLAVES_ESTILO:
+            setattr(self, k, estilo.get(k, getattr(base, k)))
+
+    def restablecer_posiciones(self) -> None:
+        for k in _POSICIONES:
+            setattr(self, k, None)
+        self.pos_cuadro = OpcionesGrafica.pos_cuadro
+
+    def reiniciar_contenido(self) -> None:
+        """Al cargar otros datos: fuera textos, límites y anotaciones (dependen de los
+        datos); el estilo y las posiciones se quedan."""
+        base = OpcionesGrafica()
+        for k in ("titulo", "etiqueta_x", "etiqueta_y", "etiqueta_y2", "x_min", "x_max", "y_min", "y_max",
+                  "y2_min", "y2_max", "titulo_leyenda"):
+            setattr(self, k, getattr(base, k))
+        self.anotaciones = []
+
+    def escalada(self, tam_fuente: float) -> "OpcionesGrafica":
+        """Copia con otro tamaño de letra; los tamaños propios (título, leyenda,
+        anotaciones) cambian en la misma proporción."""
+        f = tam_fuente / self.tam_fuente if self.tam_fuente else 1.0
+        o = replace(self, tam_fuente=tam_fuente, tam_titulo=self.tam_titulo * f, tam_leyenda=self.tam_leyenda * f)
+        o.anotaciones = [{**a, "tam": (a.get("tam") or 0) * f} for a in self.anotaciones]
+        return o
+
+    @property
+    def titulo_tam(self) -> float:
+        return self.tam_titulo or self.tam_fuente * 1.15
+
+    @property
+    def leyenda_tam(self) -> float:
+        return self.tam_leyenda or self.tam_fuente * 0.85
 
 
 @dataclass(eq=False)  # se comparan por identidad (llevan arrays)
@@ -222,16 +343,150 @@ def _marcas_corte(izq, der, c) -> None:
 # Dibujo (sin Qt)
 # ---------------------------------------------------------------------------
 def _estilo_ejes(ax, c, o: OpcionesGrafica):
+    """Fondo, marcas, bordes, rejilla y notación de unos ejes cartesianos."""
     ax.set_facecolor(c["ejes"])
-    ax.tick_params(colors=c["texto"], labelsize=o.tam_fuente * 0.9)
-    for lado in ax.spines.values():
+    abiertos = o.bordes == "abiertos"
+    espejo = o.marcas_espejo and not abiertos
+    ax.tick_params(which="both", colors=c["texto"], direction=_DIRECCION.get(o.marcas, "out"),
+                   labelsize=o.tam_fuente * 0.9, top=espejo, right=espejo)
+    for nombre, lado in ax.spines.items():
         lado.set_color(c["rejilla"])
+        if abiertos and nombre in ("top", "right"):
+            lado.set_visible(False)
+    if o.marcas_menores or o.rejilla_menor:
+        ax.minorticks_on()
+        if not o.marcas_menores:  # solo la rejilla secundaria, sin marcas
+            ax.tick_params(which="minor", length=0)
     if o.rejilla:
-        ax.grid(True, color=c["rejilla"], linewidth=0.6, alpha=0.8)
-    ax.xaxis.label.set_color(c["texto"])
-    ax.yaxis.label.set_color(c["texto"])
-    ax.xaxis.label.set_size(o.tam_fuente)
-    ax.yaxis.label.set_size(o.tam_fuente)
+        ax.grid(True, which="major", color=c["rejilla"], linewidth=0.6, alpha=0.8)
+    if o.rejilla_menor:
+        ax.grid(True, which="minor", color=c["rejilla"], linewidth=0.4, alpha=0.45)
+    _notacion(ax, o)
+    for eje in (ax.xaxis, ax.yaxis):
+        eje.label.set_color(c["texto"])
+        eje.label.set_size(o.tam_fuente)
+        eje.offsetText.set_color(c["texto"])
+        eje.offsetText.set_size(o.tam_fuente * 0.85)
+
+
+_DIRECCION = {"fuera": "out", "dentro": "in", "ambas": "inout"}
+
+
+def _estilo_gemelo(t, c, o: OpcionesGrafica) -> None:
+    """Eje y derecho (twinx): marcas como las del izquierdo y una sola rejilla."""
+    t.grid(False)
+    t.tick_params(which="both", colors=c["texto"], direction=_DIRECCION.get(o.marcas, "out"),
+                  labelsize=o.tam_fuente * 0.9)
+    if o.marcas_menores:
+        t.minorticks_on()
+    _notacion(t, o, ejes=("y",))
+    t.yaxis.label.set_color(c["texto"])
+    t.yaxis.label.set_size(o.tam_fuente)
+    t.yaxis.offsetText.set_color(c["texto"])
+
+
+def _notacion(ax, o: OpcionesGrafica, ejes=("x", "y")) -> None:
+    if o.notacion == "auto":
+        return
+    for eje in ejes:
+        try:
+            if o.notacion == "cientifica":
+                ax.ticklabel_format(axis=eje, style="sci", scilimits=(0, 0), useMathText=True)
+            else:
+                ax.ticklabel_format(axis=eje, style="plain", useOffset=False)
+        except (AttributeError, TypeError, ValueError):  # escala logarítmica o categorías
+            pass
+
+
+def _registrar(fig: Figure, clave: str, artista, ax=None, **extra) -> None:
+    """Apunta un elemento que se puede arrastrar (título, etiqueta, leyenda, texto)."""
+    if not hasattr(fig, "_ajustelab"):
+        fig._ajustelab = {}
+    fig._ajustelab.setdefault("movibles", []).append({"clave": clave, "artista": artista, "ax": ax, **extra})
+
+
+def _poner_titulo(fig: Figure, ax, o: OpcionesGrafica, c: dict, en_figura: bool = False):
+    """Título con su tamaño, peso, alineación y, si se ha arrastrado, su posición.
+    ``en_figura``: sobre toda la figura (varios paneles), no sobre unos ejes."""
+    if not o.titulo or (ax is None and not en_figura):
+        return None
+    alin = o.alin_titulo if o.alin_titulo in ("left", "center", "right") else "center"
+    kw = dict(color=c["texto"], fontsize=o.titulo_tam, fontweight="bold" if o.titulo_negrita else "normal")
+    pos = o.pos_titulo
+    if en_figura:
+        if pos is not None and pos[2] == "figura":
+            t = fig.suptitle(o.titulo, x=pos[0], y=pos[1], ha=alin, **kw)
+        else:
+            t = fig.suptitle(o.titulo, x={"left": 0.02, "center": 0.5, "right": 0.98}[alin], ha=alin, **kw)
+        _registrar(fig, "titulo", t, None)
+        return t
+    if pos is not None and pos[2] == "ejes":
+        t = ax.set_title(o.titulo, loc=alin, y=pos[1], **kw)
+        t.set_x(pos[0])
+    else:
+        t = ax.set_title(o.titulo, loc=alin, **kw)
+    _registrar(fig, "titulo", t, ax)
+    return t
+
+
+def _decorar_etiquetas(fig: Figure, o: OpcionesGrafica, ax_x=None, ax_y=None, ax_y2=None, sup_x=None) -> None:
+    """Coloca las etiquetas de los ejes donde se arrastraron y las deja movibles."""
+    for clave, ax, eje in (("etiqueta_x", ax_x, "xaxis"), ("etiqueta_y", ax_y, "yaxis"),
+                           ("etiqueta_y2", ax_y2, "yaxis")):
+        if ax is None:
+            continue
+        objeto = getattr(ax, eje)
+        pos = getattr(o, "pos_" + clave)
+        if pos is not None and pos[2] == "ejes":
+            objeto.set_label_coords(pos[0], pos[1])
+        _registrar(fig, clave, objeto.label, ax, eje=objeto)
+    if sup_x is not None:  # etiqueta común a varios paneles (eje partido)
+        pos = o.pos_etiqueta_x
+        if pos is not None and pos[2] == "figura":
+            sup_x.set_position(pos[:2])
+            sup_x._autopos = False
+        _registrar(fig, "etiqueta_x", sup_x, None)
+
+
+def _limites(ax, o: OpcionesGrafica, x: bool = True, y: bool = True, ax_y2=None) -> None:
+    """Límites fijados a mano (None: automático). En escala log se ignoran los ≤ 0."""
+    def poner(funcion, lo, hi, log):
+        if log:
+            lo = lo if lo is None or lo > 0 else None
+            hi = hi if hi is None or hi > 0 else None
+        if lo is None and hi is None or (lo is not None and hi is not None and lo >= hi):
+            return
+        funcion(lo, hi)
+
+    if ax is None:
+        return
+    if x:
+        poner(ax.set_xlim, o.x_min, o.x_max, ax.get_xscale() == "log")
+    if y:
+        poner(ax.set_ylim, o.y_min, o.y_max, ax.get_yscale() == "log")
+    if ax_y2 is not None:
+        poner(ax_y2.set_ylim, o.y2_min, o.y2_max, ax_y2.get_yscale() == "log")
+
+
+def _anotaciones(fig: Figure, ax, o: OpcionesGrafica, c: dict) -> None:
+    """Textos libres (posición en fracción de la figura), con flecha opcional hacia
+    un punto en coordenadas de los datos. No mueven el resto de la gráfica."""
+    for i, a in enumerate(o.anotaciones):
+        texto = str(a.get("texto", "")).strip()
+        if not texto:
+            continue
+        pos = (float(a.get("x", 0.5)), float(a.get("y", 0.5)))
+        kw = dict(fontsize=a.get("tam") or o.tam_fuente, color=c["texto"], ha="center", va="center", zorder=25)
+        flecha = a.get("flecha")
+        if ax is not None and flecha is not None:
+            nota = ax.annotate(texto, xy=tuple(flecha), xycoords="data", xytext=pos, textcoords="figure fraction",
+                               annotation_clip=False,
+                               arrowprops=dict(arrowstyle="->", color=c["texto"], linewidth=1, shrinkA=4, shrinkB=2),
+                               **kw)
+        else:
+            nota = fig.text(*pos, texto, **kw)
+        nota.set_in_layout(False)
+        _registrar(fig, f"nota:{i}", nota, ax)
 
 
 def _malla(x: np.ndarray, log: bool, modelo=None, n: int = 600, extremos=None) -> np.ndarray:
@@ -274,11 +529,24 @@ def dibujar(fig: Figure, e: Escena, o: OpcionesGrafica, c: dict, oscuro: bool = 
     fig.clear()
     fig.set_facecolor(c["fondo"])
     fig._ajustelab = {}
+    c = dict(c)
+    if o.color_datos:
+        c["datos"] = o.color_datos
+    if o.color_ajuste:
+        c["ajuste"] = o.color_ajuste
     if e.especial is not None:
         ax = e.especial.dibujar(fig, o, c, oscuro)
+        if ax is not None:
+            numericos = getattr(e.especial, "ejes_numericos", ())
+            _limites(ax, o, x="x" in numericos, y="y" in numericos)
+            _poner_titulo(fig, ax, o, c)
+            if ax.name != "polar":
+                _decorar_etiquetas(fig, o, ax, ax)
+        _anotaciones(fig, ax, o, c)
         return ax, None, None
     if e.series:
         ax, ax2 = _dibujar_series(fig, e, o, c, oscuro)
+        _anotaciones(fig, ax, o, c)
         return ax, ax2, None
     con_residuos = o.residuos and e.ajuste is not None and e.interseccion is None
     if con_residuos:
@@ -293,7 +561,7 @@ def dibujar(fig: Figure, e: Escena, o: OpcionesGrafica, c: dict, oscuro: bool = 
     if e.interseccion is not None:
         _dibujar_interseccion(ax, e.interseccion, c, o)
     elif e.datos is not None:
-        _dibujar_datos(ax, e, c)
+        _dibujar_datos(ax, e, c, o)
         if e.rango is not None:
             _dibujar_rango(ax, e.rango, c)
         if e.previa is not None:
@@ -302,16 +570,16 @@ def dibujar(fig: Figure, e: Escena, o: OpcionesGrafica, c: dict, oscuro: bool = 
             with np.errstate(all="ignore"):
                 yy = modelo(xx, *p)
             if np.any(np.isfinite(yy)):
-                ax.plot(xx, yy, color=c["ajuste"], linewidth=1.6, linestyle=(0, (5, 3)), alpha=0.85,
+                ax.plot(xx, yy, color=c["ajuste"], linewidth=o.grosor_ajuste * 0.8, linestyle=(0, (5, 3)), alpha=0.85,
                         label="Vista previa (valores iniciales)", zorder=4)
         for i, r in enumerate(e.comparar[:3]):
             xx = _malla(r.datos.x, o.log_x, r.modelo)
-            ax.plot(xx, r.evaluar(xx), color=COLORES_COMPARAR[oscuro][i], linewidth=1.8,
+            ax.plot(xx, r.evaluar(xx), color=COLORES_COMPARAR[oscuro][i], linewidth=o.grosor_ajuste * 0.9,
                     linestyle=_ESTILOS_COMPARAR[i], label=r.modelo.nombre, zorder=4)
         if e.ajuste is not None:
             _dibujar_ajuste(ax, e.ajuste, e.nivel_banda, e.prediccion, c, o, oscuro)
             if axr is not None:
-                _dibujar_residuos(ax, axr, e.ajuste, c)
+                _dibujar_residuos(ax, axr, e.ajuste, c, o)
             if o.cuadro_resultados:
                 cuadro = ax.annotate(_texto_resultados(e.ajuste, e.coma_decimal), xy=o.pos_cuadro,
                                      xycoords="axes fraction", ha="left", va="bottom", fontsize=o.tam_fuente * 0.85,
@@ -319,12 +587,12 @@ def dibujar(fig: Figure, e: Escena, o: OpcionesGrafica, c: dict, oscuro: bool = 
                                      bbox=dict(boxstyle="round,pad=0.5", fc=c["ejes"], ec=c["rejilla"], alpha=0.92))
         if e.interpolacion is not None:
             _dibujar_interpolacion(ax, e.interpolacion, c, o)
-    if o.titulo:
-        ax.set_title(o.titulo, color=c["texto"], fontsize=o.tam_fuente * 1.15)
+    _poner_titulo(fig, ax, o, c)
     if o.etiqueta_x:
         (axr or ax).set_xlabel(o.etiqueta_x)
     if o.etiqueta_y:
         ax.set_ylabel(o.etiqueta_y)
+    _decorar_etiquetas(fig, o, axr or ax, ax)
 
     xs = e.datos.x if e.datos is not None else None
     ys = e.datos.y if e.datos is not None else None
@@ -332,18 +600,42 @@ def dibujar(fig: Figure, e: Escena, o: OpcionesGrafica, c: dict, oscuro: bool = 
         ax.set_xscale("log")
     if o.log_y and (ys is None or np.all(ys > 0)):
         ax.set_yscale("log")
+    _limites(ax, o)
     handles, labels = ax.get_legend_handles_labels()
     if o.leyenda and len(handles) >= 2:
         _leyenda(ax, handles, labels, o, c)
+    _anotaciones(fig, ax, o, c)
     return ax, axr, cuadro
 
 
-def _leyenda(ax, handles, labels, o: OpcionesGrafica, c):
-    ley = ax.legend(handles, labels, fontsize=o.tam_fuente * 0.85, framealpha=0.9, facecolor=c["ejes"],
-                    edgecolor=c["rejilla"], loc="best")
+def _leyenda(ax, handles, labels, o: OpcionesGrafica, c, defecto: str = "best"):
+    """Leyenda con las opciones (posición, columnas, marco, tamaño y título). Si se
+    ha arrastrado, va donde se dejó. Las posiciones «outside …» son de la figura."""
+    fig = ax.figure
+    automatica = o.loc_leyenda not in LOC_LEYENDA or o.loc_leyenda == "auto"
+    loc = defecto if automatica else o.loc_leyenda
+    columnas = max(1, int(o.leyenda_columnas))
+    marco = o.leyenda_marco
+    if automatica and defecto == "outside upper center":  # una fila encima de la gráfica
+        columnas = max(columnas, min(4, len(handles)))
+        marco = False
+    kw = dict(fontsize=o.leyenda_tam, ncols=columnas, frameon=marco, framealpha=0.9, facecolor=c["ejes"],
+              edgecolor=c["rejilla"], title=o.titulo_leyenda or None, title_fontsize=o.leyenda_tam)
+    pos = o.pos_leyenda
+    if pos is not None and len(pos) == 3:
+        duenno = fig if pos[2] == "figura" else ax
+        ley = duenno.legend(handles, labels, loc=(float(pos[0]), float(pos[1])), **kw)
+    elif loc.startswith("outside"):
+        duenno = fig
+        ley = fig.legend(handles, labels, loc=loc, **kw)
+    else:
+        duenno = ax
+        ley = ax.legend(handles, labels, loc=loc, **kw)
     ley.set_zorder(20)
     for t in ley.get_texts():
         t.set_color(c["texto"])
+    ley.get_title().set_color(c["texto"])
+    _registrar(fig, "leyenda", ley, None if duenno is fig else ax)
     return ley
 
 
@@ -380,12 +672,10 @@ def _dibujar_series(fig: Figure, e: Escena, o: OpcionesGrafica, c: dict, oscuro:
             t = axs[0, j].twinx()
             if gemelos:
                 t.sharey(gemelos[0])
-            t.grid(False)  # una sola rejilla, la del eje izquierdo
+            _estilo_gemelo(t, c, o)  # una sola rejilla, la del eje izquierdo
             t.spines["top"].set_visible(False)  # ya están las del eje izquierdo
             t.spines["bottom"].set_visible(False)
-            t.tick_params(colors=c["texto"], labelsize=o.tam_fuente * 0.9)
-            t.yaxis.label.set_color(c["texto"])
-            t.yaxis.label.set_size(o.tam_fuente)
+            axs[0, j].tick_params(axis="y", which="both", right=False)  # el derecho es del otro eje
             gemelos.append(t)
     destinos = {"izq": list(axs[0]), "der": gemelos or (list(axs[1]) if apilados else [])}
 
@@ -405,14 +695,14 @@ def _dibujar_series(fig: Figure, e: Escena, o: OpcionesGrafica, c: dict, oscuro:
             nombre = etiqueta if j == 0 else "_nolegend_"
             if dx is not None or dy is not None:
                 destino.errorbar(s.x[m], s.y[m], xerr=sel(dx, m), yerr=sel(dy, m), color=color, ecolor=color,
-                                 linestyle=linea, marker=marcador, ms=5, linewidth=1.6, elinewidth=1, capsize=2,
-                                 label=nombre, zorder=3)
+                                 linestyle=linea, marker=marcador, ms=o.tam_marcador, linewidth=o.grosor_linea,
+                                 elinewidth=o.grosor_error, capsize=o.tam_tapa, label=nombre, zorder=3)
             else:
-                destino.plot(s.x[m], s.y[m], color=color, linestyle=linea, marker=marcador, ms=5, linewidth=1.6,
-                             label=nombre, zorder=3)
+                destino.plot(s.x[m], s.y[m], color=color, linestyle=linea, marker=marcador, ms=o.tam_marcador,
+                             linewidth=o.grosor_linea, label=nombre, zorder=3)
             if np.any(m_ex) and marcador != "none":
-                destino.plot(s.x[m_ex], s.y[m_ex], linestyle="none", marker=marcador, ms=6, mfc="none", mec=color,
-                             alpha=0.5, zorder=2)
+                destino.plot(s.x[m_ex], s.y[m_ex], linestyle="none", marker=marcador, ms=o.tam_marcador + 1,
+                             mfc="none", mec=color, alpha=0.5, zorder=2)
 
     def etiqueta_eje(series, propia):
         if propia:
@@ -425,8 +715,9 @@ def _dibujar_series(fig: Figure, e: Escena, o: OpcionesGrafica, c: dict, oscuro:
     if ax2 is not None:
         ax2.set_ylabel(etiqueta_eje(der, o.etiqueta_y2))
     texto_x = o.etiqueta_x or e.nombre_x
+    sup_x = None
     if k > 1:
-        fig.supxlabel(texto_x, color=c["texto"], fontsize=o.tam_fuente)
+        sup_x = fig.supxlabel(texto_x, color=c["texto"], fontsize=o.tam_fuente)
     else:
         axs[-1, 0].set_xlabel(texto_x)
     if doble_eje:
@@ -461,38 +752,36 @@ def _dibujar_series(fig: Figure, e: Escena, o: OpcionesGrafica, c: dict, oscuro:
                     a.tick_params(axis="y", which="both", left=False, labelleft=False)
                 if j < k - 1:
                     a.spines["right"].set_visible(False)
+                    a.tick_params(axis="y", which="both", right=False)
             if gemelos and j < k - 1:
                 gemelos[j].spines["right"].set_visible(False)
                 gemelos[j].tick_params(axis="y", which="both", right=False, labelright=False)
         for r in range(filas):
             for j in range(k - 1):
                 _marcas_corte(axs[r, j], axs[r, j + 1], c)
-    if o.titulo:
-        if k > 1:
-            fig.suptitle(o.titulo, color=c["texto"], fontsize=o.tam_fuente * 1.15)
-        else:
-            ax.set_title(o.titulo, color=c["texto"], fontsize=o.tam_fuente * 1.15)
+    _poner_titulo(fig, ax, o, c, en_figura=k > 1)
+    if k == 1:
+        _limites(axs[-1, 0], o, x=True, y=False)
+    _limites(ax, o, x=False, y=True, ax_y2=destinos["der"][0] if destinos["der"] else None)
+    _decorar_etiquetas(fig, o, axs[-1, 0] if k == 1 else None, ax, ax2, sup_x=sup_x)
     if o.leyenda:
         if doble_eje:
             # «best» solo mira las series de un eje: la leyenda iría encima de las del
-            # otro. Se pone fuera, sobre la gráfica, en una fila.
+            # otro. Por defecto va fuera, sobre la gráfica, en una fila.
             h1, l1 = ax.get_legend_handles_labels()
             h2, l2 = gemelos[0].get_legend_handles_labels()
             if len(h1) + len(h2) >= 2:
-                ley = fig.legend(h1 + h2, l1 + l2, loc="outside upper center", ncol=min(4, len(h1) + len(h2)),
-                                 fontsize=o.tam_fuente * 0.85, frameon=False)
-                for t in ley.get_texts():
-                    t.set_color(c["texto"])
+                _leyenda(ax, h1 + h2, l1 + l2, o, c, defecto="outside upper center")
         else:
             for r in range(filas):
                 h, l = axs[r, 0].get_legend_handles_labels()
                 if len(h) >= 2:
                     _leyenda(axs[r, 0], h, l, o, c)
-    fig._ajustelab = {"ejes": destinos, "limites": limites, "cortes": cortes}
+    fig._ajustelab.update({"ejes": destinos, "limites": limites, "cortes": cortes})
     return ax, ax2
 
 
-def _dibujar_datos(ax, e: Escena, c, color=None, etiqueta="Datos"):
+def _dibujar_datos(ax, e: Escena, c, o: OpcionesGrafica, color=None, etiqueta="Datos"):
     d = e.datos
     color = color or c["datos"]
     m = d.incluidos
@@ -500,11 +789,12 @@ def _dibujar_datos(ax, e: Escena, c, color=None, etiqueta="Datos"):
     dy = d.dy
     sel = (lambda arr, mask: None if arr is None else arr[mask])
     if np.any(m):
-        ax.errorbar(d.x[m], d.y[m], xerr=sel(dx, m), yerr=sel(dy, m), fmt="o", ms=5, color=color,
-                    ecolor=color, elinewidth=1, capsize=2, alpha=0.95, label=etiqueta, zorder=3)
+        ax.errorbar(d.x[m], d.y[m], xerr=sel(dx, m), yerr=sel(dy, m), fmt="o", ms=o.tam_marcador, color=color,
+                    ecolor=color, elinewidth=o.grosor_error, capsize=o.tam_tapa, alpha=0.95, label=etiqueta, zorder=3)
     if np.any(~m):
-        ax.errorbar(d.x[~m], d.y[~m], xerr=sel(dx, ~m), yerr=sel(dy, ~m), fmt="o", ms=6, mfc="none",
-                    color=c["excluidos"], ecolor=c["excluidos"], elinewidth=0.8, capsize=2,
+        ax.errorbar(d.x[~m], d.y[~m], xerr=sel(dx, ~m), yerr=sel(dy, ~m), fmt="o", ms=o.tam_marcador + 1,
+                    mfc="none", color=c["excluidos"], ecolor=c["excluidos"], elinewidth=o.grosor_error * 0.8,
+                    capsize=o.tam_tapa,
                     label="Excluidos / fuera de rango", zorder=2)
     ax.set_xlabel(d.nombre_x)
     ax.set_ylabel(d.nombre_y)
@@ -527,16 +817,16 @@ def _dibujar_ajuste(ax, r: ResultadoAjuste, nivel, prediccion, c, o, oscuro):
                         label=f"{tipo} {nivel * 100:.0f} %", zorder=1)
     else:
         f = r.evaluar(xx)
-    ax.plot(xx, f, color=color, linewidth=2, label=f"Ajuste: {r.modelo.nombre}", zorder=5)
+    ax.plot(xx, f, color=color, linewidth=o.grosor_ajuste, label=f"Ajuste: {r.modelo.nombre}", zorder=5)
 
 
-def _dibujar_residuos(ax, axr, r: ResultadoAjuste, c):
+def _dibujar_residuos(ax, axr, r: ResultadoAjuste, c, o: OpcionesGrafica):
     rn = r.residuos_norm
     axr.axhline(0, color=c["texto"], linewidth=0.8)
     for k in (-2, 2):
         axr.axhline(k, color=c["rejilla"], linewidth=0.8, linestyle="--")
-    axr.plot(r.datos.x, rn, "o", ms=4, color=c["datos"])
-    axr.set_ylabel("(y − f)/σ" if r.errores_absolutos else "(y − f)/s", fontsize=9)
+    axr.plot(r.datos.x, rn, "o", ms=o.tam_marcador * 0.8, color=c["datos"])
+    axr.set_ylabel("(y − f)/σ" if r.errores_absolutos else "(y − f)/s", fontsize=o.tam_fuente * 0.9)
     lim = max(3.0, float(np.nanmax(np.abs(rn))) * 1.15) if np.any(np.isfinite(rn)) else 3.0
     axr.set_ylim(-lim, lim)
     axr.set_xlabel(r.datos.nombre_x)
@@ -546,19 +836,20 @@ def _dibujar_residuos(ax, axr, r: ResultadoAjuste, c):
 def _dibujar_interpolacion(ax, f: Interpolacion, c, o):
     lo, hi = f.rango
     xx = np.geomspace(lo, hi, 800) if (o.log_x and lo > 0) else np.linspace(lo, hi, 800)
-    ax.plot(xx, f(xx), color=c["interpolacion"], linewidth=2, label=METODOS[f.metodo], zorder=4)
+    ax.plot(xx, f(xx), color=c["interpolacion"], linewidth=o.grosor_ajuste, label=METODOS[f.metodo], zorder=4)
 
 
 def _dibujar_interseccion(ax, I: Interseccion, c, o):
     for r, color, n in ((I.ajuste1, c["datos"], 1), (I.ajuste2, c["ajuste"], 2)):
         d = r.datos
-        ax.errorbar(d.x, d.y, xerr=d.dx if d.tiene_dx else None, yerr=d.dy, fmt="o", ms=5, color=color,
-                    ecolor=color, elinewidth=1, capsize=2, label=f"Conjunto {n}", zorder=3)
+        ax.errorbar(d.x, d.y, xerr=d.dx if d.tiene_dx else None, yerr=d.dy, fmt="o", ms=o.tam_marcador, color=color,
+                    ecolor=color, elinewidth=o.grosor_error, capsize=o.tam_tapa, label=f"Conjunto {n}", zorder=3)
         lo, hi = min(np.min(d.x), I.x), max(np.max(d.x), I.x)
         margen = 0.05 * (hi - lo)
         xx = np.linspace(lo - margen, hi + margen, 400)
         if r.modelo.dominio_valido(xx):
-            ax.plot(xx, r.evaluar(xx), color=color, linewidth=2, label=f"Ajuste {n}: {r.modelo.nombre}", zorder=4)
+            ax.plot(xx, r.evaluar(xx), color=color, linewidth=o.grosor_ajuste, label=f"Ajuste {n}: {r.modelo.nombre}",
+                    zorder=4)
         ax.set_xlabel(d.nombre_x)
         ax.set_ylabel(d.nombre_y)
     ancho, alto, ang = I.elipse(0.6827)
@@ -583,6 +874,7 @@ class Grafica(QWidget):
     rangoSeleccionado = Signal(float, float)
     corteSeleccionado = Signal(float, float)  # tramo de x que se quita (eje partido)
     personalizar = Signal()
+    personalizarEn = Signal(str)  # abre «Personalizar» en una pestaña concreta
     opcionesCambiadas = Signal()
 
     def __init__(self, tema: GestorTema, parent=None):
@@ -613,7 +905,10 @@ class Grafica(QWidget):
         self.b_cortar = boton("cortar", "Cortar", "Arrastra en horizontal sobre un tramo de x para quitarlo: "
                                                   "el eje se parte (//) y la gráfica se acorta", True)
         self.b_cortar.setVisible(False)  # solo en «Representar» (puntos x-y)
-        self.b_personalizar = boton("personalizar", "Personalizar", "Título, etiquetas, tamaño de letra, leyenda…")
+        self.b_personalizar = boton("personalizar", "Personalizar",
+                                    "Título, ejes, leyenda, tamaños, colores, textos y plantillas de estilo.\n"
+                                    "En la gráfica: arrastra el título, la leyenda, las etiquetas o los textos;\n"
+                                    "doble clic para editarlos; clic derecho para añadir textos y flechas.")
         self._botones_herramienta = {"region": self.b_region, "rango": self.b_rango, "cortar": self.b_cortar}
         for nombre, b in self._botones_herramienta.items():
             b.toggled.connect(lambda on, n=nombre: self._activar_herramienta(n if on else None))
@@ -649,6 +944,7 @@ class Grafica(QWidget):
         self._selector = None
         self._selectores: list = []
         self._objetivos: list = []  # para la etiqueta al pasar el ratón en los otros tipos
+        self._arrastre: dict | None = None  # elemento que se está moviendo con el ratón
         self.lienzo.mpl_connect("button_press_event", self._al_pulsar)
         self.lienzo.mpl_connect("button_release_event", self._al_soltar)
         self.lienzo.mpl_connect("motion_notify_event", self._al_mover)
@@ -695,6 +991,7 @@ class Grafica(QWidget):
         self._anotacion = None
         self._puntos_px = None
         self._objetivos = []
+        self._arrastre = None
         e = self.escena
         if e.vacia:
             self.figura.clear()
@@ -850,8 +1147,22 @@ class Grafica(QWidget):
         return self._cuadro is not None and self._cuadro.contains(evento)[0]
 
     def _al_pulsar(self, evento):
-        if (evento.button != 1 or self.barra.mode or self._herramienta or not self._dentro(evento)
-                or self._sobre_cuadro(evento)):
+        if self.barra.mode or self._herramienta:
+            return
+        if evento.button == 3 and not self.escena.vacia:
+            self._menu_contextual(evento).exec(QCursor.pos())
+            return
+        if evento.button != 1:
+            return
+        el = self._elemento_en(evento)
+        if el is not None:  # título, leyenda, etiqueta o texto: se arrastra (doble clic: se edita)
+            if evento.dblclick:
+                self.editar_elemento(el)
+            else:
+                self._arrastre = {"el": el, "inicio": np.array([evento.x, evento.y], float),
+                                  "px0": self._pixel_de(el), "movido": False}
+            return
+        if not self._dentro(evento) or self._sobre_cuadro(evento):
             return
         i = self._punto_cercano(evento)
         fila = None if i is None else self._fila_de(i)
@@ -859,6 +1170,13 @@ class Grafica(QWidget):
             self.puntoClicado.emit(fila)
 
     def _al_soltar(self, evento):
+        if self._arrastre is not None:
+            arrastre, self._arrastre = self._arrastre, None
+            if arrastre["movido"]:
+                self._guardar_posicion(arrastre["el"])
+                self.opcionesCambiadas.emit()
+                self.redibujar()
+            return
         # Si se ha arrastrado el cuadro de resultados, se recuerda su posición
         if self._cuadro is not None and self._ax is not None:
             pos = tuple(float(v) for v in self._cuadro.xyann)
@@ -889,6 +1207,20 @@ class Grafica(QWidget):
         return texto, self._ax, d.x[i], d.y[i]
 
     def _al_mover(self, evento):
+        if self._arrastre is not None:
+            a = self._arrastre
+            delta = np.array([evento.x, evento.y], float) - a["inicio"]
+            if np.abs(delta).sum() > 2:
+                a["movido"] = True
+            if a["movido"]:
+                self._mover_a(a["el"], a["px0"] + delta)
+                self.lienzo.draw_idle()
+            return
+        if not (self.barra.mode or self._herramienta):
+            if self._elemento_en(evento) is not None:
+                self.lienzo.setCursor(Qt.SizeAllCursor)
+            else:
+                self.lienzo.unsetCursor()
         if self._objetivos and not (self.barra.mode or self._herramienta):
             self._etiqueta_especial(evento)
             return
@@ -942,3 +1274,160 @@ class Grafica(QWidget):
                 va="top" if arriba else "bottom", zorder=50,
                 bbox=dict(boxstyle="round,pad=0.4", fc=c["ejes"], ec=c["rejilla"], alpha=0.95))
         self.lienzo.draw_idle()
+
+    # -- elementos que se mueven y se editan sobre la gráfica ------------------------
+    def _movibles(self) -> list[dict]:
+        return list(getattr(self.figura, "_ajustelab", {}).get("movibles", []))
+
+    def _elemento_en(self, evento) -> dict | None:
+        """Título, leyenda, etiqueta de eje o texto libre bajo el ratón (los textos y la
+        leyenda primero, que están encima)."""
+        orden = {"nota": 0, "leyenda": 1, "titulo": 2}
+        for el in sorted(self._movibles(), key=lambda e: orden.get(e["clave"].split(":")[0], 3)):
+            art = el["artista"]
+            try:
+                if art.get_visible() and (el["clave"] == "leyenda" or art.get_text()) and art.contains(evento)[0]:
+                    return el
+            except (AttributeError, TypeError, ValueError, RuntimeError):
+                continue
+        return None
+
+    def _pixel_de(self, el: dict) -> np.ndarray:
+        art = el["artista"]
+        if el["clave"] == "leyenda":
+            b = art.get_window_extent()
+            return np.array([b.x0, b.y0], float)
+        if el["clave"].startswith("nota:"):
+            return np.asarray(self.figura.transFigure.transform(art.get_position()), float)
+        return np.asarray(art.get_transform().transform(art.get_position()), float)
+
+    def _mover_a(self, el: dict, px) -> None:
+        clave, art, ax = el["clave"], el["artista"], el.get("ax")
+        if clave == "leyenda":
+            ref = ax.transAxes if ax is not None else self.figura.transFigure
+            x, y = ref.inverted().transform(px)
+            art.set_bbox_to_anchor(None)
+            if hasattr(art, "_outside_loc"):  # ya no va «fuera»: el ajuste de la figura no la recoloca
+                art._outside_loc = None
+            art.set_loc((float(x), float(y)))
+        elif clave.startswith("nota:"):
+            art.set_position(tuple(self.figura.transFigure.inverted().transform(px)))
+        elif el.get("eje") is not None:  # etiqueta de un eje
+            el["eje"].set_label_coords(*ax.transAxes.inverted().transform(px))
+        else:  # título (de unos ejes o de la figura) o etiqueta común
+            art.set_position(tuple(art.get_transform().inverted().transform(px)))
+            if clave == "titulo" and ax is not None:
+                ax._autotitlepos = False
+            if hasattr(art, "_autopos"):
+                art._autopos = False
+
+    def _guardar_posicion(self, el: dict) -> None:
+        o = self.opciones
+        clave, art, ax = el["clave"], el["artista"], el.get("ax")
+        if clave == "leyenda":
+            ref = ax.transAxes if ax is not None else self.figura.transFigure
+            b = art.get_window_extent()
+            x, y = ref.inverted().transform((b.x0, b.y0))
+            o.pos_leyenda = (float(x), float(y), "ejes" if ax is not None else "figura")
+        elif clave.startswith("nota:"):
+            i = int(clave[5:])
+            if i < len(o.anotaciones):
+                x, y = art.get_position()
+                o.anotaciones[i] = {**o.anotaciones[i], "x": float(x), "y": float(y)}
+        elif el.get("eje") is not None:
+            x, y = ax.transAxes.inverted().transform(self._pixel_de(el))
+            setattr(o, "pos_" + clave, (float(x), float(y), "ejes"))
+        else:
+            x, y = art.get_position()
+            setattr(o, "pos_" + clave, (float(x), float(y), "ejes" if ax is not None else "figura"))
+
+    def editar_elemento(self, el: dict) -> None:
+        """Doble clic: el título y las etiquetas se editan aquí mismo; la leyenda abre su
+        pestaña de «Personalizar»; un texto libre, su texto."""
+        clave = el["clave"]
+        if clave == "leyenda":
+            self.personalizarEn.emit("leyenda")
+            return
+        if clave.startswith("nota:"):
+            self.editar_nota(int(clave[5:]))
+            return
+        atributo = clave  # «titulo», «etiqueta_x», «etiqueta_y» o «etiqueta_y2»
+        nombres = {"titulo": "Título de la gráfica", "etiqueta_x": "Etiqueta del eje x",
+                   "etiqueta_y": "Etiqueta del eje y", "etiqueta_y2": "Etiqueta del eje y derecho"}
+        actual = getattr(self.opciones, atributo) or el["artista"].get_text()
+        texto, ok = QInputDialog.getText(self, nombres.get(clave, "Texto"),
+                                         nombres.get(clave, "Texto") + " (admite LaTeX entre $…$; vacío: automático):",
+                                         text=actual)
+        if ok:
+            setattr(self.opciones, atributo, texto.strip())
+            self.opcionesCambiadas.emit()
+            self.redibujar()
+
+    def _menu_contextual(self, evento) -> QMenu:
+        menu = QMenu(self)
+        el = self._elemento_en(evento)
+        fx, fy = (float(v) for v in self.figura.transFigure.inverted().transform((evento.x, evento.y)))
+        if el is not None and el["clave"].startswith("nota:"):
+            i = int(el["clave"][5:])
+            menu.addAction("Editar el texto…", lambda: self.editar_nota(i))
+            menu.addAction(icono("quitar"), "Quitar el texto", lambda: self.quitar_nota(i))
+            menu.addSeparator()
+        elif el is not None:
+            menu.addAction("Editar…", lambda: self.editar_elemento(el))
+            menu.addAction("Devolver a su sitio", lambda: self._restablecer_posicion(el["clave"]))
+            menu.addSeparator()
+        menu.addAction("Añadir un texto aquí…", lambda: self.anadir_nota(fx, fy))
+        if self._ax is not None and evento.inaxes is not None:
+            xd, yd = (float(v) for v in self._ax.transData.inverted().transform((evento.x, evento.y)))
+            menu.addAction("Añadir una flecha que señale aquí…",
+                           lambda: self.anadir_nota(min(fx + 0.15, 0.92), min(fy + 0.15, 0.92), flecha=(xd, yd)))
+        menu.addSeparator()
+        menu.addAction("Restablecer las posiciones", self.restablecer_posiciones)
+        menu.addAction(icono("personalizar"), "Personalizar…", self.personalizar.emit)
+        return menu
+
+    def anadir_nota(self, x: float, y: float, flecha=None, texto: str | None = None) -> bool:
+        if texto is None:
+            texto, ok = QInputDialog.getText(self, "Añadir texto", "Texto (admite LaTeX entre $…$):")
+            if not ok:
+                return False
+        texto = texto.strip()
+        if not texto:
+            return False
+        self.opciones.anotaciones.append({"texto": texto, "x": float(x), "y": float(y),
+                                          "flecha": None if flecha is None else [float(v) for v in flecha],
+                                          "tam": 0})
+        self.opcionesCambiadas.emit()
+        self.redibujar()
+        return True
+
+    def editar_nota(self, i: int) -> None:
+        notas = self.opciones.anotaciones
+        if not 0 <= i < len(notas):
+            return
+        texto, ok = QInputDialog.getText(self, "Editar texto", "Texto (vacío: se quita):", text=notas[i]["texto"])
+        if not ok:
+            return
+        if texto.strip():
+            notas[i] = {**notas[i], "texto": texto.strip()}
+            self.opcionesCambiadas.emit()
+            self.redibujar()
+        else:
+            self.quitar_nota(i)
+
+    def quitar_nota(self, i: int) -> None:
+        if 0 <= i < len(self.opciones.anotaciones):
+            self.opciones.anotaciones.pop(i)
+            self.opcionesCambiadas.emit()
+            self.redibujar()
+
+    def _restablecer_posicion(self, clave: str) -> None:
+        if hasattr(self.opciones, "pos_" + clave):
+            setattr(self.opciones, "pos_" + clave, None)
+            self.opcionesCambiadas.emit()
+            self.redibujar()
+
+    def restablecer_posiciones(self) -> None:
+        self.opciones.restablecer_posiciones()
+        self.opcionesCambiadas.emit()
+        self.redibujar()

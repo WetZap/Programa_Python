@@ -28,7 +28,8 @@ from .. import __version__  # noqa: E402
 from ..datos import EXTENSIONES, EXT_HOJA, ErrorDatos, hojas, leer_tabla, leer_texto  # noqa: E402
 from . import ejemplos, sesion  # noqa: E402
 from .acerca import DialogoAcercaDe, ImagenFlotante  # noqa: E402
-from .dialogos import DialogoPersonalizar, copiar_figura, exportar, figura_para  # noqa: E402
+from .dialogos import copiar_figura, exportar, figura_para  # noqa: E402
+from .personalizar import DialogoPersonalizar, opciones_nuevas  # noqa: E402
 from .estilo import hoja_estilo  # noqa: E402
 from .grafica import Escena, Grafica, con_coma  # noqa: E402
 from .iconos import icono, icono_aplicacion  # noqa: E402
@@ -93,6 +94,7 @@ class VentanaPrincipal(QMainWindow):
         self.panel_datos = PanelDatos()
         self.panel_datos.modelo.pila = self.pila
         self.grafica = Grafica(tema)
+        self.grafica.opciones = opciones_nuevas(self.ajustes)  # con el estilo predeterminado del usuario
         self.bienvenida = Bienvenida(ejemplos.nombres())
         self.centro = QStackedWidget()
         self.centro.addWidget(self.bienvenida)
@@ -145,6 +147,7 @@ class VentanaPrincipal(QMainWindow):
         self.grafica.rangoSeleccionado.connect(lambda lo, hi: self.panel_datos.modelo.fijar_rango((lo, hi)))
         self.grafica.corteSeleccionado.connect(lambda lo, hi: self.p_repr.anadir_corte(lo, hi))
         self.grafica.personalizar.connect(self.personalizar_grafica)
+        self.grafica.personalizarEn.connect(self.personalizar_grafica)
         self.pestanas.currentChanged.connect(lambda _: self.actualizar_grafica())
         self.pila.cleanChanged.connect(lambda limpio: self.setWindowModified(not limpio))
         self.bienvenida.abrir.connect(self.dialogo_abrir)
@@ -525,6 +528,7 @@ class VentanaPrincipal(QMainWindow):
         for p in self.paneles:
             p.reiniciar()
         self.panel_datos.cargar(df, descripcion)
+        self.grafica.opciones.reiniciar_contenido()  # textos, límites y notas eran de los datos anteriores
         self.pila.clear()
         obtenidos = self.obtener_datos(silencioso=True)
         if obtenidos is not None:  # antes de que una sesión o un ejemplo fijen n
@@ -607,6 +611,7 @@ class VentanaPrincipal(QMainWindow):
             p.reiniciar()
         self.panel_datos.modelo.vaciar()
         self.panel_datos.info.setText("Sin datos")
+        self.grafica.fijar_opciones(opciones_nuevas(self.ajustes))
         self.pila.clear()
         self.centro.setCurrentWidget(self.bienvenida)
         self._actualizar_titulo()
@@ -707,11 +712,15 @@ class VentanaPrincipal(QMainWindow):
                       transparente=v.get("transparente", False))
         self.notificar("Gráfica copiada al portapapeles (imagen y SVG).", "bueno")
 
-    def personalizar_grafica(self) -> None:
-        dlg = DialogoPersonalizar(self.grafica.opciones, self)
-        if dlg.exec() == QDialog.Accepted:
-            dlg.aplicar(self.grafica.opciones)
+    def personalizar_grafica(self, pestana: str | None = None) -> None:
+        def aplicar(dialogo):
+            dialogo.aplicar(self.grafica.opciones)
             self.grafica.redibujar()
+
+        dlg = DialogoPersonalizar(self.grafica.opciones, self, pestana=pestana or None, al_aplicar=aplicar,
+                                  ajustes=self.ajustes)
+        if dlg.exec() == QDialog.Accepted:
+            aplicar(dlg)
 
     def guardar_informe(self) -> None:
         texto = self.panel_activo().texto_informe()
@@ -817,7 +826,23 @@ def crear_aplicacion(argv: list[str]) -> QApplication:
     from .. import fuentes
 
     fuentes.registrar_qt(app)  # Inter en toda la interfaz
+    _traducir_qt(app)
     return app
+
+
+def _traducir_qt(app: QApplication) -> None:
+    """Los textos propios de Qt (Aceptar, Cancelar, los diálogos de color y de
+    ficheros…) en español. PySide6 trae las traducciones; si faltan (Qt del sistema
+    sin ellas), se queda en inglés sin más."""
+    from PySide6.QtCore import QLibraryInfo, QTranslator
+
+    carpeta = QLibraryInfo.path(QLibraryInfo.TranslationsPath)
+    app._traductores = []  # hay que mantenerlos vivos
+    for nombre in ("qtbase_es", "qt_es"):
+        t = QTranslator(app)
+        if t.load(nombre, carpeta):
+            app.installTranslator(t)
+            app._traductores.append(t)
 
 
 def main(argv: list[str] | None = None, fichero: str | None = None) -> int:
