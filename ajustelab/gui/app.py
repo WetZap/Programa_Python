@@ -293,8 +293,12 @@ class VentanaPrincipal(QMainWindow):
         m.addAction(self._accion("&Restablecer disposición", self.restablecer_disposicion))
 
         m = mb.addMenu("A&yuda")
+        m.addAction(self._accion("&Guía de uso (en la web)",
+                                 lambda: QDesktopServices.openUrl(QUrl(f"{URL_REPO}/blob/main/docs/GUIA.md"))))
         m.addAction(self._accion("&Atajos de teclado", self._mostrar_atajos))
         m.addAction(self._accion("&Repositorio en GitHub", lambda: QDesktopServices.openUrl(QUrl(URL_REPO))))
+        m.addAction(self._accion("&Buscar versiones nuevas",
+                                 lambda: QDesktopServices.openUrl(QUrl(f"{URL_REPO}/releases/latest"))))
         m.addAction(self._accion("Acerca &de ajustelab", self._acerca_de, None, "info"))
 
     def _crear_barra(self) -> None:

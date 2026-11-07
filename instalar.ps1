@@ -328,7 +328,7 @@ function AjInstalar {
     $valores = @{
         DisplayName = 'ajustelab'; DisplayVersion = $version; Publisher = 'WetZap (Jorge del Río López)'
         DisplayIcon = $ico; InstallLocation = $AjRaiz; URLInfoAbout = $AjRepo
-        HelpLink = "$AjRepo#solución-de-problemas"; UninstallString = $orden; QuietUninstallString = "$orden -Si"
+        HelpLink = "$AjRepo/blob/main/docs/INSTALACION.md#solución-de-problemas"; UninstallString = $orden; QuietUninstallString = "$orden -Si"
     }
     foreach ($k in $valores.Keys) { Set-ItemProperty -Path $AjClaveDesinstalar -Name $k -Value $valores[$k] }
     foreach ($k in 'NoModify', 'NoRepair') { Set-ItemProperty -Path $AjClaveDesinstalar -Name $k -Value 1 -Type DWord }

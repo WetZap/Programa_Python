@@ -17,4 +17,4 @@ Los ejecutables no están firmados con un certificado de pago, así que el siste
 
 `SHA256SUMS.txt` tiene las sumas para comprobar las descargas (`sha256sum -c --ignore-missing SHA256SUMS.txt`).
 
-Con Python instalado también se puede instalar con `pip` o con los instaladores de una línea: ver el [README](https://github.com/WetZap/Programa_Python#instalación).
+Con Python instalado también se puede instalar con `pip` o con los instaladores de una línea: ver [Instalación](https://github.com/WetZap/Programa_Python/blob/main/docs/INSTALACION.md).

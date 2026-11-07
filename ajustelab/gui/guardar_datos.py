@@ -51,8 +51,10 @@ class DialogoGuardarDatos(QDialog):
             self.columna_x.setCurrentText(columna_x)
         self.x_desde = QLineEdit()
         self.x_hasta = QLineEdit()
-        self.x_desde.setPlaceholderText("desde (vacío: sin límite)")
-        self.x_hasta.setPlaceholderText("hasta (vacío: sin límite)")
+        self.x_desde.setPlaceholderText("desde")
+        self.x_hasta.setPlaceholderText("hasta")
+        for campo in (self.x_desde, self.x_hasta):
+            campo.setToolTip("Vacío: sin límite por ese lado. Admite coma decimal.")
         if modelo.rango_x is not None:
             self.x_desde.setText(f"{modelo.rango_x[0]:.10g}")
             self.x_hasta.setText(f"{modelo.rango_x[1]:.10g}")
