@@ -31,10 +31,13 @@ from .acerca import DialogoAcercaDe, ImagenFlotante  # noqa: E402
 from .dialogos import copiar_figura, exportar, figura_para  # noqa: E402
 from .personalizar import DialogoPersonalizar, opciones_nuevas  # noqa: E402
 from .estilo import hoja_estilo  # noqa: E402
-from .grafica import Escena, Grafica, con_coma  # noqa: E402
+from .grafica import Escena, con_coma  # noqa: E402
+from .lienzo import Grafica  # noqa: E402
 from .iconos import icono, icono_aplicacion  # noqa: E402
 from .panel_interpolacion import PanelInterpolacion  # noqa: E402
-from .paneles import PanelAjuste, PanelInterseccion, PanelSeleccion  # noqa: E402
+from .panel_interseccion import PanelInterseccion  # noqa: E402
+from .panel_seleccion import PanelSeleccion  # noqa: E402
+from .paneles import PanelAjuste  # noqa: E402
 from .representar import PanelRepresentar  # noqa: E402
 from .tabla import NINGUNA, PanelDatos  # noqa: E402
 from .tema import GestorTema  # noqa: E402

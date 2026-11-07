@@ -114,12 +114,15 @@ class ModeloTabla(QAbstractTableModel):
     def cargar(self, df: pd.DataFrame) -> None:
         """Contenido nuevo (abrir fichero): no se puede deshacer y vacía la pila."""
         self.beginResetModel()
-        celdas = [[_valor_celda(v) for v in fila] for fila in df.itertuples(index=False, name=None)]
-        self._v = np.array([[c[0] for c in fila] for fila in celdas], dtype=float).reshape(df.shape)
+        self._v = np.full(df.shape, np.nan)
         self._t = _vacio_texto(*df.shape)
-        for i, fila in enumerate(celdas):
-            for j, (_, texto) in enumerate(fila):
-                self._t[i, j] = texto
+        for j in range(df.shape[1]):
+            col = df.iloc[:, j]
+            if pd.api.types.is_numeric_dtype(col) and not pd.api.types.is_bool_dtype(col):
+                self._v[:, j] = col.to_numpy(dtype=float)  # columna numérica: sin recorrer celda a celda
+                continue
+            for i, valor in enumerate(col.tolist()):
+                self._v[i, j], self._t[i, j] = _valor_celda(valor)
         self._nombres = [str(c) for c in df.columns]
         self.excluidas = set()
         self.rango_x = None

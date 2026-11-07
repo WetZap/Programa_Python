@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QColorDialog, QComb
 
 from .grafica import (BORDES, CLAVES_ESTILO, ESTILOS_LINEA, FORMAS_MARCA, LOC_LEYENDA, MARCA_DEFECTO, MARCAS,
                       NOTACION, TIPOS_MARCA, OpcionesGrafica)
+from .util import numero as _numero
 
 PLANTILLAS = {
     "Por defecto": {},
@@ -94,16 +95,6 @@ def opciones_nuevas(ajustes: QSettings | None = None) -> OpcionesGrafica:
 
 
 # --- utilidades de los controles ---------------------------------------------------
-def _numero(texto: str) -> float | None:
-    texto = texto.strip().replace(",", ".")
-    if not texto:
-        return None
-    try:
-        return float(texto)
-    except ValueError:
-        return None
-
-
 def _texto_numero(v) -> str:
     return "" if v is None else f"{v:g}"
 

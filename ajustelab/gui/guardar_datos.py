@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, 
                                QLineEdit, QListWidget, QListWidgetItem, QSpinBox, QVBoxLayout, QWidget)
 
 from ..datos import FORMATOS_GUARDAR
+from .util import numero as _numero
 
 MODOS = {
     "todas": "Todas las filas",
@@ -22,16 +23,6 @@ MODOS = {
     "filas": "Filas de … a …",
     "seleccion": "Las seleccionadas en la tabla",
 }
-
-
-def _numero(texto: str) -> float | None:
-    t = texto.strip().replace(",", ".")
-    if not t:
-        return None
-    try:
-        return float(t)
-    except ValueError:
-        return None
 
 
 class DialogoGuardarDatos(QDialog):

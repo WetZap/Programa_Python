@@ -406,7 +406,7 @@ def leer_texto(texto: str, *, delimitador: str | None = None, decimal: str | Non
             filas_validas[i] = fila
             actual.append(i)
             if len(actual) > len(bloque):
-                bloque = list(actual)
+                bloque = actual  # sin copiar (copiar en cada fila era cuadrático)
         else:
             actual = []
 
