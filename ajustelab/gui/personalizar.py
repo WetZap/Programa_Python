@@ -1,6 +1,6 @@
 """Diálogo «Personalizar gráfica» y plantillas de estilo.
 
-Pestañas: Textos, Ejes, Leyenda, Datos y curvas, Textos libres y Estilo. Lo que
+Pestañas: Textos, Ejes, Leyenda, Datos y curvas, Marcas, Textos libres y Estilo. Lo que
 se ve en la gráfica (título, leyenda, etiquetas de los ejes y textos libres)
 también se mueve arrastrándolo y se edita con doble clic; aquí está todo lo demás
 y la forma de volver cada cosa a su sitio.
@@ -22,7 +22,9 @@ from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QColorDialog, QComb
                                QLabel, QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QPushButton, QSpinBox,
                                QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget)
 
-from .grafica import BORDES, CLAVES_ESTILO, LOC_LEYENDA, MARCAS, NOTACION, OpcionesGrafica
+from .grafica import (BORDES, CLAVES_ESTILO, ESTILOS_LINEA, FORMAS_MARCA, LOC_LEYENDA, MARCA_DEFECTO, MARCAS,
+                      NOTACION, TIPOS_MARCA, OpcionesGrafica)
+from .util import numero as _numero
 
 PLANTILLAS = {
     "Por defecto": {},
@@ -93,16 +95,6 @@ def opciones_nuevas(ajustes: QSettings | None = None) -> OpcionesGrafica:
 
 
 # --- utilidades de los controles ---------------------------------------------------
-def _numero(texto: str) -> float | None:
-    texto = texto.strip().replace(",", ".")
-    if not texto:
-        return None
-    try:
-        return float(texto)
-    except ValueError:
-        return None
-
-
 def _texto_numero(v) -> str:
     return "" if v is None else f"{v:g}"
 
@@ -158,11 +150,129 @@ class BotonColor(QPushButton):
             self.fijar(color.name())
 
 
+def describir_marca(m: dict) -> str:
+    m = {**MARCA_DEFECTO, **m}
+    tipo = m["tipo"]
+    if tipo == "punto":
+        donde = f"({m['x']:.6g}, {m['y']:.6g})"
+    elif tipo == "tramo":
+        donde = f"x de {min(m['x'], m['x2']):.6g} a {max(m['x'], m['x2']):.6g}"
+    elif tipo == "vertical":
+        donde = f"x = {m['x']:.6g}"
+    else:
+        donde = f"y = {m['y']:.6g}"
+    return f"{TIPOS_MARCA.get(tipo, tipo)} {donde}" + (f" — «{m['texto']}»" if m["texto"] else "")
+
+
+class DialogoMarca(QDialog):
+    """Una marca: punto, tramo de x o línea vertical u horizontal, con su texto,
+    color, forma, tamaño, estilo de línea y transparencia."""
+
+    def __init__(self, marca: dict | None = None, parent=None, titulo: str = "Marca", doble_eje: bool = False):
+        super().__init__(parent)
+        self.setWindowTitle(titulo)
+        m = {**MARCA_DEFECTO, **(marca or {})}
+        self.tipo = _combo(TIPOS_MARCA)
+        self.x = QLineEdit()
+        self.y = QLineEdit()
+        self.x2 = QLineEdit()
+        self.texto = QLineEdit()
+        self.texto.setPlaceholderText("sin texto")
+        self.texto.setToolTip("Admite LaTeX entre $…$")
+        self.color = BotonColor("Color de la marca")
+        self.forma = _combo(FORMAS_MARCA)
+        self.tam = _giro(2, 60, 1, 0)
+        self.relleno = QCheckBox("Rellena (si no, un aro alrededor del punto)")
+        self.estilo = _combo(ESTILOS_LINEA)
+        self.grosor = _giro(0.2, 10, 0.2)
+        self.alfa = _giro(0.02, 1, 0.05, 2)
+        self.leyenda = QCheckBox("El texto va en la leyenda (no junto a la marca)")
+        self.eje = _combo({"izq": "Izquierdo", "der": "Derecho"})
+        self.eje.setToolTip("Con dos ejes y: a qué eje se refiere la y")
+        self._form = QFormLayout()
+        f = self._form
+        f.addRow("Tipo:", self.tipo)
+        f.addRow("x:", self.x)
+        f.addRow("hasta x:", self.x2)
+        f.addRow("y:", self.y)
+        f.addRow("Eje y:", self.eje)
+        f.addRow("Texto:", self.texto)
+        f.addRow("Color:", self.color)
+        f.addRow("Forma:", self.forma)
+        f.addRow("Tamaño:", self.tam)
+        f.addRow("", self.relleno)
+        f.addRow("Línea:", self.estilo)
+        f.addRow("Grosor:", self.grosor)
+        f.addRow("Opacidad:", self.alfa)
+        f.addRow("", self.leyenda)
+        botones = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        botones.accepted.connect(self._aceptar)
+        botones.rejected.connect(self.reject)
+        self.aviso = QLabel()
+        self.aviso.setObjectName("secundario")
+        capa = QVBoxLayout(self)
+        capa.addLayout(f)
+        capa.addWidget(self.aviso)
+        capa.addWidget(botones)
+        self._doble_eje = doble_eje
+        _fijar_combo(self.tipo, m["tipo"])
+        self.x.setText(_texto_numero(m["x"]))
+        self.y.setText(_texto_numero(m["y"]))
+        self.x2.setText(_texto_numero(m["x2"]))
+        self.texto.setText(m["texto"])
+        self.color.fijar(m["color"])
+        _fijar_combo(self.forma, m["forma"])
+        self.tam.setValue(float(m["tam"]))
+        self.relleno.setChecked(bool(m["relleno"]))
+        _fijar_combo(self.estilo, m["estilo"])
+        self.grosor.setValue(float(m["grosor"]))
+        self.alfa.setValue(float(m["alfa"]))
+        self.leyenda.setChecked(bool(m["leyenda"]))
+        _fijar_combo(self.eje, m["eje"])
+        self.tipo.currentIndexChanged.connect(self._ver_campos)
+        self._ver_campos()
+
+    def _ver_campos(self, *_):
+        t = self.tipo.currentData()
+        filas = {self.x2: t == "tramo", self.y: t in ("punto", "horizontal"),
+                 self.eje: self._doble_eje and t in ("punto", "horizontal"),
+                 self.forma: t == "punto", self.tam: t == "punto", self.relleno: t == "punto",
+                 self.estilo: t in ("vertical", "horizontal"), self.grosor: t in ("vertical", "horizontal"),
+                 self.alfa: t == "tramo", self.x: t != "horizontal"}
+        for w, visible in filas.items():
+            self._form.setRowVisible(w, visible)
+        self.adjustSize()
+
+    def marca(self) -> dict:
+        t = self.tipo.currentData()
+        m = {**MARCA_DEFECTO, "tipo": t, "texto": self.texto.text().strip(), "color": self.color.color,
+             "forma": self.forma.currentData(), "tam": self.tam.value(), "relleno": self.relleno.isChecked(),
+             "estilo": self.estilo.currentData(), "grosor": self.grosor.value(), "alfa": self.alfa.value(),
+             "leyenda": self.leyenda.isChecked(), "eje": self.eje.currentData()}
+        for clave, campo in (("x", self.x), ("y", self.y), ("x2", self.x2)):
+            v = _numero(campo.text())
+            m[clave] = v if v is not None else MARCA_DEFECTO[clave]
+        if t != "punto" and t != "horizontal":
+            m["y"] = _numero(self.y.text())
+        return m
+
+    def _aceptar(self) -> None:
+        t = self.tipo.currentData()
+        faltan = [n for n, campo, hace_falta in (("x", self.x, t != "horizontal"),
+                                                 ("hasta x", self.x2, t == "tramo"),
+                                                 ("y", self.y, t in ("punto", "horizontal")))
+                  if hace_falta and _numero(campo.text()) is None]
+        if faltan:
+            self.aviso.setText("Falta un número en: " + ", ".join(faltan) + ".")
+            return
+        self.accept()
+
+
 class DialogoPersonalizar(QDialog):
     """Todas las opciones de la gráfica, por pestañas. ``al_aplicar(dialogo)`` se
     llama con «Aplicar» para ver el cambio sin cerrar."""
 
-    PESTANAS = ("textos", "ejes", "leyenda", "datos", "notas", "estilo")
+    PESTANAS = ("textos", "ejes", "leyenda", "datos", "marcas", "notas", "estilo")
 
     def __init__(self, opciones: OpcionesGrafica, parent=None, pestana: str | None = None, al_aplicar=None,
                  ajustes: QSettings | None = None):
@@ -179,6 +289,7 @@ class DialogoPersonalizar(QDialog):
         self.pestanas.addTab(self._pagina_ejes(), "Ejes")
         self.pestanas.addTab(self._pagina_leyenda(), "Leyenda")
         self.pestanas.addTab(self._pagina_datos(), "Datos y curvas")
+        self.pestanas.addTab(self._pagina_marcas(), "Marcas")
         self.pestanas.addTab(self._pagina_notas(), "Textos libres")
         self.pestanas.addTab(self._pagina_estilo(), "Estilo")
         self._fijar_controles(opciones)
@@ -343,6 +454,58 @@ class DialogoPersonalizar(QDialog):
         nota.setObjectName("secundario")
         form.addRow(nota)
         return w
+
+    def _pagina_marcas(self) -> QWidget:
+        w = QWidget()
+        capa = QVBoxLayout(w)
+        self.lista_marcas = QListWidget()
+        self.lista_marcas.itemDoubleClicked.connect(lambda _i: self._editar_marca())
+        b_anadir = QPushButton("Añadir…")
+        b_anadir.clicked.connect(self._anadir_marca)
+        b_editar = QPushButton("Editar…")
+        b_editar.clicked.connect(self._editar_marca)
+        b_quitar = QPushButton("Quitar")
+        b_quitar.clicked.connect(self._quitar_marca)
+        fila = QHBoxLayout()
+        for b in (b_anadir, b_editar, b_quitar):
+            fila.addWidget(b)
+        fila.addStretch(1)
+        nota = QLabel("Señalan un punto importante, un tramo de x o un valor con una línea, con su texto, color, "
+                      "forma y tamaño. En la gráfica: botón «Marcar» o clic derecho; doble clic en una marca para "
+                      "editarla.")
+        nota.setWordWrap(True)
+        nota.setObjectName("secundario")
+        capa.addWidget(self.lista_marcas, 1)
+        capa.addLayout(fila)
+        capa.addWidget(nota)
+        self._marcas: list[dict] = []
+        return w
+
+    def _rellenar_marcas(self) -> None:
+        self.lista_marcas.clear()
+        for m in self._marcas:
+            self.lista_marcas.addItem(describir_marca(m))
+
+    def _anadir_marca(self) -> None:
+        dlg = DialogoMarca(None, self, "Marca nueva", doble_eje=True)
+        if dlg.exec() == QDialog.Accepted:
+            self._marcas.append(dlg.marca())
+            self._rellenar_marcas()
+
+    def _editar_marca(self) -> None:
+        i = self.lista_marcas.currentRow()
+        if 0 <= i < len(self._marcas):
+            dlg = DialogoMarca(self._marcas[i], self, "Editar marca", doble_eje=True)
+            if dlg.exec() == QDialog.Accepted:
+                self._marcas[i] = dlg.marca()
+                self._rellenar_marcas()
+                self.lista_marcas.setCurrentRow(i)
+
+    def _quitar_marca(self) -> None:
+        i = self.lista_marcas.currentRow()
+        if 0 <= i < len(self._marcas):
+            self._marcas.pop(i)
+            self._rellenar_marcas()
 
     def _pagina_notas(self) -> QWidget:
         w = QWidget()
@@ -547,6 +710,8 @@ class DialogoPersonalizar(QDialog):
         self.notas.setRowCount(0)
         for nota in o.anotaciones:
             self._anadir_nota(nota)
+        self._marcas = [dict(m) for m in o.destacados]
+        self._rellenar_marcas()
 
     def opciones(self) -> OpcionesGrafica:
         """Copia de las opciones originales con lo que hay en los controles."""
@@ -587,6 +752,7 @@ class DialogoPersonalizar(QDialog):
         o.color_ajuste = self.color_ajuste.color
         o.cuadro_resultados = self.cuadro.isChecked()
         o.anotaciones = self._leer_notas()
+        o.destacados = [dict(m) for m in self._marcas]
         if self._loc_tocada:  # elegir una posición deshace la que se arrastró
             o.pos_leyenda = None
         if self._alin_tocada:

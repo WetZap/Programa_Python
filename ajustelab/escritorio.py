@@ -76,6 +76,9 @@ def orden_lanzar() -> list[str]:
 
     No se resuelven enlaces: en un entorno virtual, ``bin/python`` es un enlace al
     Python del sistema y resolverlo perdería las dependencias del entorno."""
+    if getattr(sys, "frozen", False):  # ejecutable independiente (PyInstaller)
+        appimage = os.environ.get("APPIMAGE")  # dentro de una AppImage, el fichero .AppImage
+        return [appimage if appimage else str(Path(sys.executable).absolute())]
     python = Path(sys.executable).absolute()
     if ES_WINDOWS:
         # Scripts\ajustelab.exe es el lanzador sin consola que crea pip; si no está

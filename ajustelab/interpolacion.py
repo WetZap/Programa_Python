@@ -40,7 +40,7 @@ from scipy.interpolate import (Akima1DInterpolator, CubicSpline, PchipInterpolat
 
 from .datos import Datos
 
-__all__ = ["METODOS", "Interpolacion", "ResultadoMC", "Tramo", "ErrorInterpolacion", "interpolar"]
+__all__ = ["METODOS", "Interpolacion", "ResultadoMC", "Tramo", "ErrorInterpolacion", "interpolar", "valores_x"]
 
 METODOS: dict[str, str] = {
     "lineal": "Lineal a trozos",
@@ -56,6 +56,85 @@ METODOS: dict[str, str] = {
 }
 
 _MINIMO_PUNTOS = {"suavizado": 5, "periodico": 3}
+MAX_EVALUACIONES = 10_000
+
+# Para el resumen del informe: qué es cada método, en una frase
+_DESCRIPCION = {
+    "lineal": "interpolación lineal a trozos",
+    "natural": "un spline cúbico natural (segunda derivada nula en los extremos)",
+    "not-a-knot": "un spline cúbico con condición not-a-knot (tercera derivada continua en el segundo y el "
+                  "penúltimo nodo)",
+    "clamped": "un spline cúbico con la derivada fijada en los extremos",
+    "periodico": "un spline cúbico periódico",
+    "pchip": "el interpolante cúbico monótono PCHIP (Fritsch–Carlson), que no oscila entre los nodos",
+    "akima": "el interpolante de Akima",
+    "makima": "el interpolante de Akima modificado",
+    "suavizado": "un spline cúbico de suavizado",
+    "polinomio": "el polinomio interpolador global",
+}
+
+
+def valores_x(texto: str) -> np.ndarray:
+    """Valores de x escritos a mano: ``17``, ``1; 2; 5`` (o separados por espacios)
+    o un rango ``inicio:fin:paso`` (``inicio:fin`` da 11 puntos). Admite coma decimal."""
+    texto = texto.strip()
+    if not texto:
+        raise ErrorInterpolacion("Escribe un valor de x, una lista (1; 2; 5) o un rango (0:10:0,5).")
+    salida: list[float] = []
+    for trozo in texto.replace("\n", ";").split(";"):
+        for parte in trozo.split():
+            numeros = parte.replace(",", ".").split(":")
+            try:
+                v = [float(n) for n in numeros]
+            except ValueError:
+                raise ErrorInterpolacion(f"«{parte}» no es un número ni un rango inicio:fin:paso.") from None
+            if len(v) == 1:
+                salida.append(v[0])
+            elif len(v) in (2, 3):
+                a, b = v[0], v[1]
+                if len(v) == 2:
+                    salida.extend(np.linspace(a, b, 11))
+                    continue
+                paso = v[2]
+                if paso == 0 or (b - a) / paso < 0:
+                    raise ErrorInterpolacion(f"El paso de «{parte}» no lleva de {a:g} a {b:g}.")
+                n = int(np.floor((b - a) / paso + 1e-9)) + 1
+                if n > MAX_EVALUACIONES:
+                    raise ErrorInterpolacion(f"«{parte}» da {n} puntos (máximo {MAX_EVALUACIONES}).")
+                salida.extend(a + paso * np.arange(n))
+            else:
+                raise ErrorInterpolacion(f"«{parte}»: un rango es inicio:fin o inicio:fin:paso.")
+    if len(salida) > MAX_EVALUACIONES:
+        raise ErrorInterpolacion(f"Demasiados puntos ({len(salida)}; máximo {MAX_EVALUACIONES}).")
+    return np.array(salida, dtype=float)
+
+
+def _unidad(nombre: str) -> str:
+    """«V (V)» → «V»; sin unidad entre paréntesis al final, cadena vacía."""
+    import re
+
+    m = re.search(r"\(([^()]*)\)\s*$", nombre)
+    return m.group(1).strip() if m else ""
+
+
+def _simbolo(nombre: str) -> str:
+    """«V (V)» → «V» (el nombre sin la unidad final)."""
+    import re
+
+    return re.sub(r"\s*\([^()]*\)\s*$", "", nombre).strip() or nombre
+
+
+def _lista(frases: list[str]) -> str:
+    return frases[0] if len(frases) == 1 else ", ".join(frases[:-1]) + " y " + frases[-1]
+
+
+def _tex(texto: str) -> str:
+    """Escapa para LaTeX lo que no esté ya entre $…$."""
+    if "$" in texto:
+        return texto
+    for a, b in (("\\", r"\textbackslash{}"), ("&", r"\&"), ("%", r"\%"), ("#", r"\#"), ("_", r"\_")):
+        texto = texto.replace(a, b)
+    return texto
 
 
 class ErrorInterpolacion(ValueError):
@@ -260,6 +339,100 @@ class Interpolacion:
     def sigma(self, x, n: int = 1000, semilla: int = 0) -> np.ndarray:
         """Incertidumbre (1σ) del valor interpolado en x."""
         return self.monte_carlo(lambda g: g(x), n=n, semilla=semilla).sigma
+
+    @property
+    def con_errores(self) -> bool:
+        return self.dy is not None or self.dx is not None
+
+    def evaluar(self, xs, n: int = 1000, semilla: int = 0):
+        """Tabla con x, f(x), σ_f, f'(x) y σ_f' (σ por Monte Carlo si los datos tienen
+        incertidumbre; NaN si no). Fuera del rango, sin extrapolar, todo NaN."""
+        import pandas as pd
+
+        xs = np.atleast_1d(np.asarray(xs, dtype=float))
+        f = np.atleast_1d(self(xs))
+        d1 = np.atleast_1d(self.derivada(xs))
+        sf = np.full(xs.shape, np.nan)
+        sd = np.full(xs.shape, np.nan)
+        validos = np.isfinite(f)
+        if self.con_errores and validos.any():
+            xv = xs[validos]
+            r = self.monte_carlo(lambda g: np.concatenate([g(xv), g.derivada(xv)]), n=n, semilla=semilla)
+            sig = np.atleast_1d(r.sigma)
+            sf[validos], sd[validos] = sig[: xv.size], sig[xv.size:]
+        return pd.DataFrame({"x": xs, "f": f, "sigma_f": sf, "derivada": d1, "sigma_derivada": sd})
+
+    def informe(self, xs=None, latex: bool = False, n: int = 500) -> str:
+        """Resumen para pegar en un informe en lugar de los tramos: qué método, con
+        cuántos puntos y en qué rango, cuánto vale la incertidumbre de la curva y,
+        si se dan ``xs``, una tabla corta de valores interpolados."""
+        from .estadistica import formatear
+
+        lo, hi = self.rango
+        nx, ny = self.nombre_x, self.nombre_y
+        sx, sy, ux, uy = _simbolo(nx), _simbolo(ny), _unidad(nx), _unidad(ny)
+        tramos = self.tramos()
+        grado = max(t.grado for t in tramos)
+        T = _tex if latex else (lambda t: t)
+
+        def num(v, cifras=4, unidad=""):
+            texto = f"${v:.{cifras}g}$" if latex else f"{v:.{cifras}g}"
+            return f"{texto} {T(unidad)}" if unidad else texto
+
+        metodo = _DESCRIPCION.get(self.metodo, METODOS[self.metodo])
+        if self.metodo == "clamped" and self.opciones.get("derivadas_extremos"):
+            d0, d1 = self.opciones["derivadas_extremos"]
+            metodo += f" ({num(d0)} y {num(d1)})"
+        if self.metodo == "suavizado":
+            lam = self.opciones.get("suavizado")
+            metodo += (f" con penalización λ = {num(lam)}" if lam is not None
+                       else " con la penalización elegida por validación cruzada generalizada (GCV)")
+        verbo = "Se ha ajustado" if self.metodo == "suavizado" else "Se ha interpolado"
+        piezas = [f"{verbo} {T(sy)} en función de {T(sx)} con {metodo} a partir de {self.x.size} puntos "
+                  f"experimentales, con {T(sx)} entre {num(lo)} y {num(hi, unidad=ux)}"
+                  + (f" ({len(tramos)} tramos de grado {grado})." if len(tramos) > 1 else ".")]
+        if self.metodo == "suavizado":
+            res = self.y - self(self.x)
+            piezas.append("La curva no pasa por los puntos: la desviación cuadrática media de los residuos es "
+                          f"{num(float(np.sqrt(np.mean(res ** 2))), 2, uy)}.")
+        if self.con_errores:
+            malla = np.linspace(lo, hi, 101)
+            try:
+                s = np.atleast_1d(self.monte_carlo(lambda g: g(malla), n=n).sigma)
+                piezas.append(f"Su incertidumbre se ha propagado por Monte Carlo ({n} réplicas de los datos dentro "
+                              f"de sus incertidumbres): en el rango de los datos vale entre {num(float(s.min()), 2)} "
+                              f"y {num(float(s.max()), 2, uy)} (mediana {num(float(np.median(s)), 2)}).")
+            except ErrorInterpolacion:
+                pass
+        ext = self.extremos()
+        if ext:
+            piezas.append("Tiene " + _lista([f"un {t} en {T(sx)} = {num(xe, unidad=ux)} "
+                                              f"({T(sy)} = {num(ye, unidad=uy)})" for xe, ye, t in ext[:4]]) + ".")
+        texto = " ".join(piezas)
+        if xs is None or len(np.atleast_1d(xs)) == 0:
+            return texto + "\n"
+        tabla = self.evaluar(xs, n=n)
+
+        def valor(v, e):
+            if not np.isfinite(v):
+                return "—"
+            return formatear(v, e, latex=latex) if np.isfinite(e) and e > 0 else f"{v:.6g}"
+
+        simples = sx.isidentifier() and sy.isidentifier()
+        if latex:
+            derivada = rf"$\mathrm{{d}}{sy}/\mathrm{{d}}{sx}$" if simples else r"$\mathrm{d}y/\mathrm{d}x$"
+            filas = [rf"    ${r.x:.6g}$ & ${valor(r.f, r.sigma_f)}$ & ${valor(r.derivada, r.sigma_derivada)}$ \\"
+                     for r in tabla.itertuples()]
+            return "\n".join([texto, "", r"\begin{table}[h]", r"  \centering",
+                              r"  \begin{tabular}{ccc}", r"    \toprule",
+                              rf"    {T(nx)} & {T(ny)} & {derivada} \\", r"    \midrule",
+                              *filas, r"    \bottomrule", r"  \end{tabular}",
+                              rf"  \caption{{Valores interpolados ({METODOS[self.metodo].lower()}).}}",
+                              r"\end{table}"]) + "\n"
+        derivada = f"d{sy}/d{sx}" if simples else "dy/dx"
+        filas = [f"  {r.x:<12.6g} {valor(r.f, r.sigma_f):<26} {valor(r.derivada, r.sigma_derivada)}"
+                 for r in tabla.itertuples()]
+        return "\n".join([texto, "", f"  {nx:<12} {ny:<26} {derivada}", *filas]) + "\n"
 
     # -- tramos -------------------------------------------------------------
     def tramos(self) -> list[Tramo]:

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ajustelab"
-version = "1.6.0"
+version = "1.7.0"
 description = "Ajuste de datos experimentales con base estadística (χ², varianza efectiva, selección de modelos)"
 readme = "README.md"
 license = "MIT"

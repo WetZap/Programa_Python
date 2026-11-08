@@ -148,3 +148,34 @@ def test_errores_de_uso():
         interpolar(Datos([0.0, 1, 2], [0.0, 1, 0]), "suavizado")
     f = interpolar(Datos(np.arange(15.0), np.arange(15.0) ** 2), "polinomio")
     assert any("Runge" in a for a in f.avisos)
+
+
+# --- evaluar y resumen para el informe -------------------------------------------
+def test_valores_x():
+    from ajustelab.interpolacion import valores_x
+
+    assert valores_x("17").tolist() == [17.0]
+    assert valores_x("1; 2,5 3").tolist() == [1.0, 2.5, 3.0]
+    assert np.allclose(valores_x("0:1:0,25"), [0, 0.25, 0.5, 0.75, 1])
+    assert valores_x("0:1").size == 11 and np.allclose(valores_x("5:1:-2"), [5, 3, 1])
+    for malo in ("", "abc", "0:1:0", "0:1:-1", "1:2:3:4", "0:1e6:1e-3"):
+        with pytest.raises(ErrorInterpolacion):
+            valores_x(malo)
+
+
+def test_evaluar_tabla_e_informe():
+    x = np.linspace(0, 10, 25)
+    d = Datos(x=x, y=np.sin(x) + 5, dy=np.full(25, 0.02), nombre_x="t (s)", nombre_y="V (V)")
+    f = interpolar(d, "natural")
+    t = f.evaluar([2.5, 5.0, 17.0], n=300)
+    assert np.allclose(t["f"][:2], f([2.5, 5.0])) and np.allclose(t["derivada"][:2], f.derivada([2.5, 5.0]))
+    assert np.all(t["sigma_f"][:2] > 0) and np.isnan(t["f"][2]) and np.isnan(t["sigma_f"][2])  # fuera del rango
+    sin_error = interpolar(Datos(x=x, y=np.sin(x), nombre_x="t", nombre_y="V"), "pchip").evaluar([1.0])
+    assert np.isnan(sin_error["sigma_f"][0]) and np.isfinite(sin_error["f"][0])
+    texto = f.informe([1, 2], n=200)
+    assert texto.startswith("Se ha interpolado V en función de t con un spline cúbico natural")
+    assert "25 puntos" in texto and "entre 0 y 10 s" in texto and "Monte Carlo" in texto and "máximo" in texto
+    assert "dV/dt" in texto and "±" in texto and len(texto.splitlines()) <= 6  # corto: nada de 24 tramos
+    latex = f.informe([1], latex=True, n=200)
+    assert r"\begin{tabular}{ccc}" in latex and r"\pm" in latex and r"$\mathrm{d}V/\mathrm{d}t$" in latex
+    assert interpolar(d, "suavizado").informe().startswith("Se ha ajustado V")

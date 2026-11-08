@@ -35,6 +35,8 @@ __all__ = [
     "ErrorDatos",
     "leer_tabla",
     "leer_texto",
+    "guardar_tabla",
+    "FORMATOS_GUARDAR",
     "hojas",
     "a_datos",
     "cargar",
@@ -378,8 +380,8 @@ def leer_texto(texto: str, *, delimitador: str | None = None, decimal: str | Non
     """Lee datos tabulares desde una cadena (fichero de texto o portapapeles)."""
     lineas: list[tuple[bool, str]] = []  # (es_comentario, contenido)
     for bruta in texto.splitlines():
-        s = bruta.strip()
-        if not s:
+        s = bruta.strip(" \r\n\f\v")  # los tabuladores iniciales son celdas vacías: se conservan
+        if not s.strip():
             continue
         if s.startswith(_PREFIJOS_COMENTARIO):
             lineas.append((True, s.lstrip("#%/!").strip()))
@@ -404,7 +406,7 @@ def leer_texto(texto: str, *, delimitador: str | None = None, decimal: str | Non
             filas_validas[i] = fila
             actual.append(i)
             if len(actual) > len(bloque):
-                bloque = list(actual)
+                bloque = actual  # sin copiar (copiar en cada fila era cuadrático)
         else:
             actual = []
 
@@ -510,6 +512,47 @@ def _tabla_desde_arrays(arrays: dict[str, np.ndarray]) -> pd.DataFrame:
     if m.shape[0] <= 6 and m.shape[1] > m.shape[0]:  # guardado por filas: [x; y; dy]
         m = m.T
     return pd.DataFrame(m.astype(float), columns=[f"{nombre}[{i}]" for i in range(m.shape[1])])
+
+
+FORMATOS_GUARDAR = {
+    "csv": ("CSV (separado por comas)", ".csv"),
+    "csv_es": ("CSV con «;» y coma decimal (Excel en español)", ".csv"),
+    "txt": ("Texto con tabuladores", ".txt"),
+    "xlsx": ("Excel", ".xlsx"),
+    "ods": ("OpenDocument (LibreOffice)", ".ods"),
+    "json": ("JSON", ".json"),
+}
+
+
+def guardar_tabla(df: pd.DataFrame, ruta: str | Path, formato: str | None = None) -> Path:
+    """Guarda una tabla (números y columnas de texto) en ``formato`` o, si no se
+    da, en el que diga la extensión. Todos se vuelven a leer con :func:`leer_tabla`."""
+    ruta = Path(ruta)
+    ext = ruta.suffix.lower()
+    if formato is None:
+        formato = {".csv": "csv", ".txt": "txt", ".tsv": "txt", ".dat": "txt", ".xlsx": "xlsx", ".ods": "ods",
+                   ".json": "json"}.get(ext)
+        if formato is None:
+            raise ErrorDatos(f"No sé guardar con la extensión «{ext}»: usa .csv, .txt, .xlsx, .ods o .json.")
+    if formato not in FORMATOS_GUARDAR:
+        raise ErrorDatos(f"Formato desconocido «{formato}».")
+    if formato == "csv":
+        df.to_csv(ruta, index=False, float_format="%.15g")
+    elif formato == "csv_es":
+        df.to_csv(ruta, index=False, sep=";", decimal=",", float_format="%.15g")
+    elif formato == "txt":
+        df.to_csv(ruta, index=False, sep="\t", float_format="%.15g")
+    elif formato == "xlsx":
+        df.to_excel(ruta, index=False)
+    elif formato == "ods":
+        df.to_excel(ruta, index=False, engine="odf")
+    else:
+        import json
+
+        columnas = {str(c): [None if (isinstance(v, float) and not np.isfinite(v)) else
+                             (v.item() if hasattr(v, "item") else v) for v in df[c].tolist()] for c in df.columns}
+        ruta.write_text(json.dumps(columnas, ensure_ascii=False, indent=1), encoding="utf-8")
+    return ruta
 
 
 def leer_tabla(ruta: str | Path, *, hoja=None, delimitador: str | None = None, decimal: str | None = None) -> pd.DataFrame:
